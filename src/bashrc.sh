@@ -12,13 +12,13 @@ function simple-server()
     else
         port=$1
     fi
-    screen -S httpserver-$port -dm python2 $CONFIG_FILES_DIR/python/simpleserver/CustomHTTPServer.py $port
+    screen -S simpleserver-$port -dm python2 $SIMPLE_SERVER_DIR/simpleserver.py $port
 }
 
 function simple-server-rnd()
 {
     port=$(rnd-port)
-    screen -S httpserver-$port -dm python2 $CONFIG_FILES_DIR/python/simpleserver/CustomHTTPServer.py $port
+    screen -S simpleserver-$port -dm python2 $SIMPLE_SERVER_DIR/simpleserver.py $port
 }
 
 function simple-server-running()
