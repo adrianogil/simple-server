@@ -32,6 +32,14 @@ import threading
 import sys, zipfile
 
 
+def sizeof_fmt(num, suffix='B'):
+    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+        if abs(num) < 1024.0:
+            return "%3.1f%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f%s%s" % (num, 'Yi', suffix)
+
+
 class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     """Simple HTTP request handler with GET/HEAD/POST commands.
@@ -76,6 +84,42 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             f.write("<strong>Failed:</strong>")
         f.write(info)
         f.write("<br><a href=\"%s\">back</a>" % self.headers['referer'])
+        f.write("<hr><small>Powered By: Gil, check new version at ")
+        f.write("<a href=\"https://github.com/adrianogil/simple-server\">")
+        f.write("here</a>.</small></body>\n</html>\n")
+        length = f.tell()
+        f.seek(0)
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.send_header("Content-Length", str(length))
+        self.end_headers()
+        if f:
+            self.copyfile(f, self.wfile)
+            f.close()
+
+    def create_directory(self, path, folder_name, last_page):
+        print("create_directory %s %s" % (path, folder_name))
+
+        result = True
+
+        new_folder = os.path.join(path, folder_name)
+
+        if os.path.exists(new_folder):
+            result = False
+        else:
+            os.mkdir(new_folder)
+
+        """Serve a POST request."""
+        f = StringIO()
+        f.write('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
+        f.write("<html>\n<title>Folder Created Page</title>\n")
+        f.write("<body>\n<h2>Folder \"%s\" Create Page</h2>\n" % (folder_name,))
+        f.write("<hr>\n")
+        if result:
+            f.write("<strong>Success:</strong>")
+        else:
+            f.write("<strong>Failed. Folder already exists!:</strong>")
+        f.write("<br><a href=\"%s\">back</a>" % (last_page,))
         f.write("<hr><small>Powered By: Gil, check new version at ")
         f.write("<a href=\"https://github.com/adrianogil/simple-server\">")
         f.write("here</a>.</small></body>\n</html>\n")
@@ -141,8 +185,13 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
         """
         path = self.translate_path(self.path)
+        print("send_head - path: " + str(self.path))
         f = None
-        if self.path.endswith('?download'):
+        if '?createfolder=' in self.path:
+            index = self.path.index('?createfolder=')
+            folder_name = self.path[index + 14:]
+            return self.create_directory(path, folder_name, self.path[:index])
+        elif self.path.endswith('?download'):
             tmp_file = "tmp.zip"
             self.path = self.path.replace("?download","")
 
@@ -201,6 +250,11 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         list.sort(key=lambda a: a.lower())
         f = StringIO()
         displaypath = cgi.escape(urllib.unquote(self.path))
+
+        js_action_create_folder = "window.open('%s' + document.getElementById('folderName').value,'_self')" % (
+                self.path.strip() + "?createfolder=",
+            )
+
         f.write('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
         f.write("<html>\n<title>Directory listing for %s</title>\n" % displaypath)
         f.write("<body>\n<h2>Directory listing for %s</h2>\n" % displaypath)
@@ -208,22 +262,40 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         f.write("<form ENCTYPE=\"multipart/form-data\" method=\"post\">")
         f.write("<input name=\"file\" type=\"file\"/>")
         f.write("<input type=\"submit\" value=\"upload\"/></form>\n")
+        f.write("<form ENCTYPE=\"multipart/form-data\">")
+        f.write("<small><i>Create folder:</i></small> <input type=\"text\" id=\"folderName\">")
+        f.write("<input type=\"button\" value=\"Create\" onclick=\"" + js_action_create_folder + "\">")
+        f.write("</form>\n")
         f.write("<hr>\n<ul>\n")
         f.write("<a href='%s'>%s</a>\n" % (self.path+"?download",'Download Directory Tree as Zip'))
         f.write("<hr>\n<ul>\n")
+        if self.path != "/":
+            f.write('<li><a href="%s">..</a>\n' % (urllib.quote(self.path + ".."),))
         for name in list:
             fullname = os.path.join(path, name)
             displayname = linkname = name
             # Append / for directories or @ for symbolic links
+
+            size_display = ""
+
             if os.path.isdir(fullname):
                 displayname = name + "/"
                 linkname = name + "/"
+            else:
+                size_value = os.path.getsize(fullname)
+                size_value = sizeof_fmt(size_value)
+
+                size_display = "   <small><i>(%s)</i></small>" % (size_value,)
+
             if os.path.islink(fullname):
                 displayname = name + "@"
                 # Note: a link to a directory displays with @ and links with /
-            f.write('<li><a href="%s">%s</a>\n'
-                    % (urllib.quote(linkname), cgi.escape(displayname)))
-        f.write("</ul>\n<hr>\n</body>\n</html>\n")
+            f.write('<li><a href="%s">%s</a>%s\n'
+                    % (urllib.quote(linkname), cgi.escape(displayname), size_display))
+        f.write("</ul></ul>\n\n")
+        f.write("<hr><small>Powered By: Gil, check new version at ")
+        f.write("<a href=\"https://github.com/adrianogil/simple-server\">")
+        f.write("here</a>.</small></body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
