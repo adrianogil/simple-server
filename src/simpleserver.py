@@ -133,6 +133,40 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.copyfile(f, self.wfile)
             f.close()
 
+    def delete_file(self, path, file_name, last_page):
+        print("delete_file %s %s" % (path, file_name))
+
+        result = True
+
+        file_path = os.path.join(path, file_name)
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+        """Serve a POST request."""
+        f = StringIO()
+        f.write('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
+        f.write("<html>\n<title>File removed </title>\n")
+        f.write("<body>\n<h2>File \"%s\" was removed!</h2>\n(No backup had been made /o\\)" % (file_name,))
+        f.write("<hr>\n")
+        if result:
+            f.write("<strong>Success:</strong>")
+        else:
+            f.write("<strong>Failed because of reasons!:</strong>")
+        f.write("<br><a href=\"%s\">back</a>" % (last_page,))
+        f.write("<hr><small>Powered By: Gil, check new version: ")
+        f.write("<a href=\"https://github.com/adrianogil/simple-server\">")
+        f.write("here</a>.</small></body>\n</html>\n")
+        length = f.tell()
+        f.seek(0)
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.send_header("Content-Length", str(length))
+        self.end_headers()
+        if f:
+            self.copyfile(f, self.wfile)
+            f.close()
+
     def deal_post_data(self):
         boundary = self.headers.plisttext.split("=")[1]
         remainbytes = int(self.headers['content-length'])
@@ -187,7 +221,12 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         path = self.translate_path(self.path)
         print("send_head - path: " + str(self.path))
         f = None
-        if '?createfolder=' in self.path:
+        if '?deletefile=' in self.path:
+            index = self.path.index('?deletefile=')
+            file_to_be_deleted = self.path[index + 12:]
+            print("Let's delete file: " + file_to_be_deleted)
+            return self.delete_file(path, file_to_be_deleted, self.path[:index])
+        elif '?createfolder=' in self.path:
             index = self.path.index('?createfolder=')
             folder_name = self.path[index + 14:]
             return self.create_directory(path, folder_name, self.path[:index])
@@ -290,10 +329,10 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             if os.path.islink(fullname):
                 displayname = name + "@"
                 # Note: a link to a directory displays with @ and links with /
-            f.write('<li><a href="%s">%s</a>%s\n'
-                    % (urllib.quote(linkname), cgi.escape(displayname), size_display))
+            f.write('<li><a href="%s">%s</a>%s <a style="background-color: #FF4500; color: #ffffff; text-decoration: none; text-align: center; height: 10px; width: 30px; padding: 2px 2px; border-top-left-radius: 3px; border-top-right-radius: 3px; border-bottom-left-radius: 3px; border-bottom-right-radius: 3px;" href="%s">x</a>\n'
+                    % (urllib.quote(linkname), cgi.escape(displayname), size_display, '?deletefile=' + cgi.escape(displayname)))
         f.write("</ul></ul>\n\n")
-        f.write("<hr><small>Powered By: Gil, check new version at ")
+        f.write("<hr><small>Powered By: Gil, check new version ")
         f.write("<a href=\"https://github.com/adrianogil/simple-server\">")
         f.write("here</a>.</small></body>\n</html>\n")
         length = f.tell()
