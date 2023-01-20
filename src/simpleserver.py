@@ -15,19 +15,16 @@ __home_page__ = "http://adrianogil.github.io"
 
 import os
 import posixpath
-import BaseHTTPServer
 import urllib
 import cgi
+import html
 import shutil
 import mimetypes
 import re
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
+from io import BytesIO
 
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
-from SocketServer import ThreadingMixIn
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 import threading
 import sys, zipfile
 
@@ -40,7 +37,7 @@ def sizeof_fmt(num, suffix='B'):
     return "%.1f%s%s" % (num, 'Yi', suffix)
 
 
-class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     """Simple HTTP request handler with GET/HEAD/POST commands.
 
@@ -72,21 +69,21 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def do_POST(self):
         """Serve a POST request."""
         r, info = self.deal_post_data()
-        print r, info, "by: ", self.client_address
-        f = StringIO()
-        f.write('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
-        f.write("<html>\n<title>Upload Result Page</title>\n")
-        f.write("<body>\n<h2>Upload Result Page</h2>\n")
-        f.write("<hr>\n")
+        print(r, info, "by: ", self.client_address)
+        f = BytesIO()
+        customwrite(b'<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
+        customwrite(b"<html>\n<title>Upload Result Page</title>\n")
+        customwrite(b"<body>\n<h2>Upload Result Page</h2>\n")
+        customwrite(b"<hr>\n")
         if r:
-            f.write("<strong>Success:</strong>")
+            customwrite(b"<strong>Success:</strong>")
         else:
-            f.write("<strong>Failed:</strong>")
-        f.write(info)
-        f.write("<br><a href=\"%s\">back</a>" % self.headers['referer'])
-        f.write("<hr><small>Powered By: Gil, check new version at ")
-        f.write("<a href=\"https://github.com/adrianogil/simple-server\">")
-        f.write("here</a>.</small></body>\n</html>\n")
+            customwrite(b"<strong>Failed:</strong>")
+        customwrite(binfo)
+        customwrite(b"<br><a href=\"%s\">back</a>" % self.headers['referer'])
+        customwrite(b"<hr><small>Powered By: Gil, check new version at ")
+        customwrite(b"<a href=\"https://github.com/adrianogil/simple-server\">")
+        customwrite(b"here</a>.</small></body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
@@ -110,19 +107,19 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             os.mkdir(new_folder)
 
         """Serve a POST request."""
-        f = StringIO()
-        f.write('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
-        f.write("<html>\n<title>Folder Created Page</title>\n")
-        f.write("<body>\n<h2>Folder \"%s\" Create Page</h2>\n" % (folder_name,))
-        f.write("<hr>\n")
+        f = BytesIO()
+        customwrite(b'<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
+        customwrite(b"<html>\n<title>Folder Created Page</title>\n")
+        customwrite(b"<body>\n<h2>Folder \"%s\" Create Page</h2>\n" % (folder_name,))
+        customwrite(b"<hr>\n")
         if result:
-            f.write("<strong>Success:</strong>")
+            customwrite(b"<strong>Success:</strong>")
         else:
-            f.write("<strong>Failed. Folder already exists!:</strong>")
-        f.write("<br><a href=\"%s\">back</a>" % (last_page,))
-        f.write("<hr><small>Powered By: Gil, check new version at ")
-        f.write("<a href=\"https://github.com/adrianogil/simple-server\">")
-        f.write("here</a>.</small></body>\n</html>\n")
+            customwrite(b"<strong>Failed. Folder already exists!:</strong>")
+        customwrite(b"<br><a href=\"%s\">back</a>" % (last_page,))
+        customwrite(b"<hr><small>Powered By: Gil, check new version at ")
+        customwrite(b"<a href=\"https://github.com/adrianogil/simple-server\">")
+        customwrite(b"here</a>.</small></body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
@@ -144,19 +141,19 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             os.remove(file_path)
 
         """Serve a POST request."""
-        f = StringIO()
-        f.write('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
-        f.write("<html>\n<title>File removed </title>\n")
-        f.write("<body>\n<h2>File \"%s\" was removed!</h2>\n(No backup had been made /o\\)" % (file_name,))
-        f.write("<hr>\n")
+        f = BytesIO()
+        customwrite(b'<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
+        customwrite(b"<html>\n<title>File removed </title>\n")
+        customwrite(b"<body>\n<h2>File \"%s\" was removed!</h2>\n(No backup had been made /o\\)" % (file_name,))
+        customwrite(b"<hr>\n")
         if result:
-            f.write("<strong>Success:</strong>")
+            customwrite(b"<strong>Success:</strong>")
         else:
-            f.write("<strong>Failed because of reasons!:</strong>")
-        f.write("<br><a href=\"%s\">back</a>" % (last_page,))
-        f.write("<hr><small>Powered By: Gil, check new version: ")
-        f.write("<a href=\"https://github.com/adrianogil/simple-server\">")
-        f.write("here</a>.</small></body>\n</html>\n")
+            customwrite(b"<strong>Failed because of reasons!:</strong>")
+        customwrite(b"<br><a href=\"%s\">back</a>" % (last_page,))
+        customwrite(b"<hr><small>Powered By: Gil, check new version: ")
+        customwrite(b"<a href=\"https://github.com/adrianogil/simple-server\">")
+        customwrite(b"here</a>.</small></body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
@@ -287,29 +284,32 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.send_error(404, "No permission to list directory")
             return None
         list.sort(key=lambda a: a.lower())
-        f = StringIO()
-        displaypath = cgi.escape(urllib.unquote(self.path))
+        f = BytesIO()
+        displaypath = html.escape(urllib.parse.unquote(self.path))
 
         js_action_create_folder = "window.open('%s' + document.getElementById('folderName').value,'_self')" % (
                 self.path.strip() + "?createfolder=",
             )
 
-        f.write('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
-        f.write("<html>\n<title>Directory listing for %s</title>\n" % displaypath)
-        f.write("<body>\n<h2>Directory listing for %s</h2>\n" % displaypath)
-        f.write("<hr>\n")
-        f.write("<form ENCTYPE=\"multipart/form-data\" method=\"post\">")
-        f.write("<input name=\"file\" type=\"file\"/>")
-        f.write("<input type=\"submit\" value=\"upload\"/></form>\n")
-        f.write("<form ENCTYPE=\"multipart/form-data\">")
-        f.write("<small><i>Create folder:</i></small> <input type=\"text\" id=\"folderName\">")
-        f.write("<input type=\"button\" value=\"Create\" onclick=\"" + js_action_create_folder + "\">")
-        f.write("</form>\n")
-        f.write("<hr>\n<ul>\n")
-        f.write("<a href='%s'>%s</a>\n" % (self.path+"?download",'Download Directory Tree as Zip'))
-        f.write("<hr>\n<ul>\n")
+        def customwrite(htmlstring):
+            f.write(htmlstring.encode('utf-8'))
+
+        customwrite('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
+        customwrite("<html>\n<title>Directory listing for %s</title>\n" % displaypath)
+        customwrite("<body>\n<h2>Directory listing for %s</h2>\n" % displaypath)
+        customwrite("<hr>\n")
+        customwrite("<form ENCTYPE=\"multipart/form-data\" method=\"post\">")
+        customwrite("<input name=\"file\" type=\"file\"/>")
+        customwrite("<input type=\"submit\" value=\"upload\"/></form>\n")
+        customwrite("<form ENCTYPE=\"multipart/form-data\">")
+        customwrite("<small><i>Create folder:</i></small> <input type=\"text\" id=\"folderName\">")
+        customwrite("<input type=\"button\" value=\"Create\" onclick=\"" + js_action_create_folder + "\">")
+        customwrite("</form>\n")
+        customwrite("<hr>\n<ul>\n")
+        customwrite("<a href='%s'>%s</a>\n" % (self.path+"?download",'Download Directory Tree as Zip'))
+        customwrite("<hr>\n<ul>\n")
         if self.path != "/":
-            f.write('<li><a href="%s">..</a>\n' % (urllib.quote(self.path + ".."),))
+            customwrite('<li><a href="%s">..</a>\n' % (urllib.parse.quote(self.path + ".."),))
         for name in list:
             fullname = os.path.join(path, name)
             displayname = linkname = name
@@ -329,12 +329,12 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             if os.path.islink(fullname):
                 displayname = name + "@"
                 # Note: a link to a directory displays with @ and links with /
-            f.write('<li><a href="%s">%s</a>%s <a style="background-color: #FF4500; color: #ffffff; text-decoration: none; text-align: center; height: 10px; width: 30px; padding: 2px 2px; border-top-left-radius: 3px; border-top-right-radius: 3px; border-bottom-left-radius: 3px; border-bottom-right-radius: 3px;" href="%s">x</a>\n'
-                    % (urllib.quote(linkname), cgi.escape(displayname), size_display, '?deletefile=' + cgi.escape(displayname)))
-        f.write("</ul></ul>\n\n")
-        f.write("<hr><small>Powered By: Gil, check new version ")
-        f.write("<a href=\"https://github.com/adrianogil/simple-server\">")
-        f.write("here</a>.</small></body>\n</html>\n")
+            customwrite('<li><a href="%s">%s</a>%s <a style="background-color: #FF4500; color: #ffffff; text-decoration: none; text-align: center; height: 10px; width: 30px; padding: 2px 2px; border-top-left-radius: 3px; border-top-right-radius: 3px; border-bottom-left-radius: 3px; border-bottom-right-radius: 3px;" href="%s">x</a>\n'
+                    % (urllib.parse.quote(linkname), html.escape(displayname), size_display, '?deletefile=' + html.escape(displayname)))
+        customwrite("</ul></ul>\n\n")
+        customwrite("<hr><small>Powered By: Gil, check new version ")
+        customwrite("<a href=\"https://github.com/adrianogil/simple-server\">")
+        customwrite("here</a>.</small></body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
@@ -355,7 +355,7 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         # abandon query parameters
         path = path.split('?',1)[0]
         path = path.split('#',1)[0]
-        path = posixpath.normpath(urllib.unquote(path))
+        path = posixpath.normpath(urllib.parse.unquote(path))
         words = path.split('/')
         words = filter(None, words)
         path = os.getcwd()
@@ -419,7 +419,7 @@ class SimpleHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 try:
     # Python 2.x
     from SocketServer import ThreadingMixIn
-    from BaseHTTPServer import HTTPServer
+    from http.server import HTTPServer
 except ImportError:
     # Python 3.x
     from socketserver import ThreadingMixIn
@@ -443,7 +443,7 @@ else:
 if sys.argv[2:]:
     os.chdir(sys.argv[2])
 
-print 'Started HTTP server on ' +  interface + ':' + str(port)
+print('Started HTTP server on ' +  interface + ':' + str(port))
 
 
 def run_server():
@@ -453,7 +453,7 @@ def run_server():
             sys.stdout.flush()
             server.handle_request()
     except KeyboardInterrupt:
-        print 'Finished.'
+        print('Finished.')
 
 if __name__ == '__main__':
     run_server()
