@@ -29,3 +29,11 @@ function simple-server-running()
 {
     screen -list | grep httpserver | awk '{print $1}'
 }
+
+function simple-upload()
+{
+    upload_target=$1
+    server_address=$2
+
+    python3 $SIMPLE_SERVER_DIR/sendfile.py ${upload_target} ${server_address}
+}
