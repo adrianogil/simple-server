@@ -31,4 +31,11 @@ if __name__ == '__main__':
     else:
         url = sys.argv[2]
 
-    send_file_to_server(file_path, url)
+    if os.path.isdir(file_path):
+        for root, dirs, files in os.walk(file_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                print(f"Sending file: {file_path}")
+                send_file_to_server(file_path, url)
+    else:
+        send_file_to_server(file_path, url)
