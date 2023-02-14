@@ -13,14 +13,16 @@ function simple-server()
         port=$1
     fi
 
-    echo "Lets run simple-server"
-    screen -S simpleserver-$port -dm python3 $SIMPLE_SERVER_DIR/simpleserver.py $port
+    local_path=$(echo ${PWD#"$HOME"} | tr "/" "_")
+
+    echo "Lets run simple-server in port "$port" and in the path "$PWD
+    screen -S simpleserver-$port-$local_path -dm python3 $SIMPLE_SERVER_DIR/simpleserver.py $port
 }
 
 function simple-server-rnd()
 {
     port=$(rnd-port)
-    screen -S simpleserver-$port -dm python3 $SIMPLE_SERVER_DIR/simpleserver.py $port
+    screen -S simpleserver-$port-$PWD -dm python3 $SIMPLE_SERVER_DIR/simpleserver.py $port
 }
 
 function simple-server-running()

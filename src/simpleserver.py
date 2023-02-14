@@ -180,6 +180,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                     for record in form["file"]:
                         open("./%s"%record.filename, "wb").write(record.file.read())
                 else:
+                    print(form["file"].filename)
                     open("./%s"%form["file"].filename, "wb").write(form["file"].file.read())
             except IOError:
                     return (False, "Can't create file to write, do you have permission to write?")
