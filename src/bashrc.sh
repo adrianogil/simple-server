@@ -37,3 +37,12 @@ function simple-upload()
 
     python3 $SIMPLE_SERVER_DIR/sendfile.py ${upload_target} ${server_address}
 }
+
+function simple-html-serve()
+{
+    target_html=$1
+    port=$(rnd-port)
+    simple-server $port
+    echo "Serve HTML file on port "$port
+    open-url http://localhost:$port/$target_html
+}
