@@ -75,19 +75,39 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         def customwrite(htmlstring):
             f.write(htmlstring.encode('utf-8'))
 
-        customwrite('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
-        customwrite("<html>\n<title>Upload Result Page</title>\n")
-        customwrite("<body>\n<h2>Upload Result Page</h2>\n")
-        customwrite("<hr>\n")
+        customwrite("<!DOCTYPE html>\n")
+        customwrite("<html lang=\"en\">\n")
+        customwrite("<head>\n")
+        customwrite("<meta charset=\"utf-8\">\n")
+        customwrite("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+        customwrite("<title>Upload Result</title>\n")
+        customwrite("<style>\n")
+        customwrite("body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;"
+                    "background:#f5f7fb;color:#1f2937;margin:0;padding:32px;}\n")
+        customwrite(".card{max-width:720px;margin:0 auto;background:#fff;border-radius:14px;"
+                    "box-shadow:0 10px 30px rgba(15,23,42,.08);padding:28px;}\n")
+        customwrite(".title{font-size:22px;margin:0 0 8px;}\n")
+        customwrite(".status{font-weight:600;margin:12px 0;}\n")
+        customwrite(".status.success{color:#059669;}\n")
+        customwrite(".status.fail{color:#dc2626;}\n")
+        customwrite(".actions a{display:inline-block;margin-top:12px;padding:8px 14px;"
+                    "background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;}\n")
+        customwrite(".footer{margin-top:18px;font-size:12px;color:#64748b;}\n")
+        customwrite("</style>\n")
+        customwrite("</head>\n")
+        customwrite("<body>\n")
+        customwrite("<div class=\"card\">\n")
+        customwrite("<h2 class=\"title\">Upload Result</h2>\n")
         if r:
-            customwrite("<strong>Success:</strong>")
+            customwrite("<div class=\"status success\">Success</div>\n")
         else:
-            customwrite("<strong>Failed:</strong>")
-        customwrite(info)
-        customwrite("<br><a href=\"%s\">back</a>" % self.headers['referer'])
-        customwrite("<hr><small>Powered By: Gil, check new version at ")
-        customwrite("<a href=\"https://github.com/adrianogil/simple-server\">")
-        customwrite("here</a>.</small></body>\n</html>\n")
+            customwrite("<div class=\"status fail\">Failed</div>\n")
+        customwrite("<p>%s</p>\n" % info)
+        customwrite("<div class=\"actions\"><a href=\"%s\">Back to listing</a></div>\n" % self.headers['referer'])
+        customwrite("<div class=\"footer\">Powered By: Gil, check new version at "
+                    "<a href=\"https://github.com/adrianogil/simple-server\">here</a>.</div>\n")
+        customwrite("</div>\n")
+        customwrite("</body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
@@ -112,18 +132,42 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
         """Serve a POST request."""
         f = BytesIO()
-        customwrite(b'<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
-        customwrite(b"<html>\n<title>Folder Created Page</title>\n")
-        customwrite(b"<body>\n<h2>Folder \"%s\" Create Page</h2>\n" % (folder_name,))
-        customwrite(b"<hr>\n")
+
+        def customwrite(htmlstring):
+            f.write(htmlstring.encode('utf-8'))
+
+        customwrite("<!DOCTYPE html>\n")
+        customwrite("<html lang=\"en\">\n")
+        customwrite("<head>\n")
+        customwrite("<meta charset=\"utf-8\">\n")
+        customwrite("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+        customwrite("<title>Folder Created</title>\n")
+        customwrite("<style>\n")
+        customwrite("body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;"
+                    "background:#f5f7fb;color:#1f2937;margin:0;padding:32px;}\n")
+        customwrite(".card{max-width:720px;margin:0 auto;background:#fff;border-radius:14px;"
+                    "box-shadow:0 10px 30px rgba(15,23,42,.08);padding:28px;}\n")
+        customwrite(".title{font-size:22px;margin:0 0 8px;}\n")
+        customwrite(".status{font-weight:600;margin:12px 0;}\n")
+        customwrite(".status.success{color:#059669;}\n")
+        customwrite(".status.fail{color:#dc2626;}\n")
+        customwrite(".actions a{display:inline-block;margin-top:12px;padding:8px 14px;"
+                    "background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;}\n")
+        customwrite(".footer{margin-top:18px;font-size:12px;color:#64748b;}\n")
+        customwrite("</style>\n")
+        customwrite("</head>\n")
+        customwrite("<body>\n")
+        customwrite("<div class=\"card\">\n")
+        customwrite("<h2 class=\"title\">Folder \"%s\"</h2>\n" % folder_name)
         if result:
-            customwrite(b"<strong>Success:</strong>")
+            customwrite("<div class=\"status success\">Created successfully.</div>\n")
         else:
-            customwrite(b"<strong>Failed. Folder already exists!:</strong>")
-        customwrite(b"<br><a href=\"%s\">back</a>" % (last_page,))
-        customwrite(b"<hr><small>Powered By: Gil, check new version at ")
-        customwrite(b"<a href=\"https://github.com/adrianogil/simple-server\">")
-        customwrite(b"here</a>.</small></body>\n</html>\n")
+            customwrite("<div class=\"status fail\">Folder already exists.</div>\n")
+        customwrite("<div class=\"actions\"><a href=\"%s\">Back to listing</a></div>\n" % last_page)
+        customwrite("<div class=\"footer\">Powered By: Gil, check new version at "
+                    "<a href=\"https://github.com/adrianogil/simple-server\">here</a>.</div>\n")
+        customwrite("</div>\n")
+        customwrite("</body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
@@ -146,18 +190,42 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
         """Serve a POST request."""
         f = BytesIO()
-        customwrite(b'<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
-        customwrite(b"<html>\n<title>File removed </title>\n")
-        customwrite(b"<body>\n<h2>File \"%s\" was removed!</h2>\n(No backup had been made /o\\)" % (file_name,))
-        customwrite(b"<hr>\n")
+
+        def customwrite(htmlstring):
+            f.write(htmlstring.encode('utf-8'))
+
+        customwrite("<!DOCTYPE html>\n")
+        customwrite("<html lang=\"en\">\n")
+        customwrite("<head>\n")
+        customwrite("<meta charset=\"utf-8\">\n")
+        customwrite("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+        customwrite("<title>File Removed</title>\n")
+        customwrite("<style>\n")
+        customwrite("body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;"
+                    "background:#f5f7fb;color:#1f2937;margin:0;padding:32px;}\n")
+        customwrite(".card{max-width:720px;margin:0 auto;background:#fff;border-radius:14px;"
+                    "box-shadow:0 10px 30px rgba(15,23,42,.08);padding:28px;}\n")
+        customwrite(".title{font-size:22px;margin:0 0 8px;}\n")
+        customwrite(".status{font-weight:600;margin:12px 0;}\n")
+        customwrite(".status.success{color:#059669;}\n")
+        customwrite(".status.fail{color:#dc2626;}\n")
+        customwrite(".actions a{display:inline-block;margin-top:12px;padding:8px 14px;"
+                    "background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;}\n")
+        customwrite(".footer{margin-top:18px;font-size:12px;color:#64748b;}\n")
+        customwrite("</style>\n")
+        customwrite("</head>\n")
+        customwrite("<body>\n")
+        customwrite("<div class=\"card\">\n")
+        customwrite("<h2 class=\"title\">Removed \"%s\"</h2>\n" % file_name)
         if result:
-            customwrite(b"<strong>Success:</strong>")
+            customwrite("<div class=\"status success\">File deleted successfully.</div>\n")
         else:
-            customwrite(b"<strong>Failed because of reasons!:</strong>")
-        customwrite(b"<br><a href=\"%s\">back</a>" % (last_page,))
-        customwrite(b"<hr><small>Powered By: Gil, check new version: ")
-        customwrite(b"<a href=\"https://github.com/adrianogil/simple-server\">")
-        customwrite(b"here</a>.</small></body>\n</html>\n")
+            customwrite("<div class=\"status fail\">Failed to delete file.</div>\n")
+        customwrite("<div class=\"actions\"><a href=\"%s\">Back to listing</a></div>\n" % last_page)
+        customwrite("<div class=\"footer\">Powered By: Gil, check new version at "
+                    "<a href=\"https://github.com/adrianogil/simple-server\">here</a>.</div>\n")
+        customwrite("</div>\n")
+        customwrite("</body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
@@ -276,20 +344,59 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         def customwrite(htmlstring):
             f.write(htmlstring.encode('utf-8'))
 
-        customwrite('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
-        customwrite("<html>\n<title>Directory listing for %s</title>\n" % displaypath)
-        customwrite("<body>\n<h2>Directory listing for %s</h2>\n" % displaypath)
-        customwrite("<hr>\n")
+        customwrite("<!DOCTYPE html>\n")
+        customwrite("<html lang=\"en\">\n")
+        customwrite("<head>\n")
+        customwrite("<meta charset=\"utf-8\">\n")
+        customwrite("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+        customwrite("<title>Directory listing for %s</title>\n" % displaypath)
+        customwrite("<style>\n")
+        customwrite("body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;"
+                    "background:#f5f7fb;color:#0f172a;margin:0;padding:32px;}\n")
+        customwrite(".container{max-width:960px;margin:0 auto;}\n")
+        customwrite(".card{background:#fff;border-radius:16px;padding:24px;"
+                    "box-shadow:0 12px 30px rgba(15,23,42,.08);}\n")
+        customwrite(".header{display:flex;flex-direction:column;gap:6px;margin-bottom:18px;}\n")
+        customwrite(".header h2{margin:0;font-size:24px;}\n")
+        customwrite(".header .path{color:#64748b;font-size:14px;}\n")
+        customwrite(".actions{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:18px;}\n")
+        customwrite(".actions form{display:flex;align-items:center;gap:8px;"
+                    "background:#f8fafc;padding:10px 12px;border-radius:12px;"
+                    "border:1px solid #e2e8f0;}\n")
+        customwrite("input[type='text'],input[type='file']{font-size:14px;}\n")
+        customwrite(".btn{background:#2563eb;color:#fff;border:none;border-radius:8px;"
+                    "padding:8px 12px;font-size:14px;cursor:pointer;}\n")
+        customwrite(".btn.secondary{background:#0f172a;}\n")
+        customwrite(".list{list-style:none;margin:0;padding:0;}\n")
+        customwrite(".list li{display:flex;align-items:center;justify-content:space-between;"
+                    "padding:10px 12px;border-bottom:1px solid #eef2f7;}\n")
+        customwrite(".list li:last-child{border-bottom:none;}\n")
+        customwrite(".file-link{color:#1d4ed8;text-decoration:none;font-weight:500;}\n")
+        customwrite(".file-meta{display:flex;align-items:center;gap:12px;color:#64748b;font-size:12px;}\n")
+        customwrite(".delete{background:#ef4444;color:#fff;border-radius:8px;text-decoration:none;"
+                    "padding:4px 8px;font-size:12px;}\n")
+        customwrite(".footer{margin-top:20px;font-size:12px;color:#64748b;}\n")
+        customwrite("</style>\n")
+        customwrite("</head>\n")
+        customwrite("<body>\n")
+        customwrite("<div class=\"container\">\n")
+        customwrite("<div class=\"card\">\n")
+        customwrite("<div class=\"header\">\n")
+        customwrite("<h2>Directory listing</h2>\n")
+        customwrite("<div class=\"path\">%s</div>\n" % displaypath)
+        customwrite("</div>\n")
+        customwrite("<div class=\"actions\">\n")
         customwrite("<form ENCTYPE=\"multipart/form-data\" method=\"post\">")
         customwrite("<input name=\"file\" type=\"file\"/>")
-        customwrite("<input type=\"submit\" value=\"upload\"/></form>\n")
+        customwrite("<button class=\"btn\" type=\"submit\">Upload</button></form>\n")
         customwrite("<form ENCTYPE=\"multipart/form-data\">")
-        customwrite("<small><i>Create folder:</i></small> <input type=\"text\" id=\"folderName\">")
-        customwrite("<input type=\"button\" value=\"Create\" onclick=\"" + js_action_create_folder + "\">")
+        customwrite("<label for=\"folderName\"><small>Create folder:</small></label>")
+        customwrite("<input type=\"text\" id=\"folderName\" placeholder=\"New folder\">")
+        customwrite("<button class=\"btn secondary\" type=\"button\" onclick=\"" + js_action_create_folder + "\">Create</button>")
         customwrite("</form>\n")
-        customwrite("<hr>\n<ul>\n")
-        customwrite("<a href='%s'>%s</a>\n" % (self.path+"?download",'Download Directory Tree as Zip'))
-        customwrite("<hr>\n<ul>\n")
+        customwrite("<a class=\"btn\" href='%s'>Download zip</a>\n" % (self.path + "?download",))
+        customwrite("</div>\n")
+        customwrite("<ul class=\"list\">\n")
         if self.path != "/":
             customwrite('<li><a href="%s">..</a>\n' % (urllib.parse.quote(self.path + ".."),))
         for name in list:
@@ -306,17 +413,26 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                 size_value = os.path.getsize(fullname)
                 size_value = sizeof_fmt(size_value)
 
-                size_display = "   <small><i>(%s)</i></small>" % (size_value,)
+                size_display = "<span>(%s)</span>" % (size_value,)
 
             if os.path.islink(fullname):
                 displayname = name + "@"
                 # Note: a link to a directory displays with @ and links with /
-            customwrite('<li><a href="%s">%s</a>%s <a style="background-color: #FF4500; color: #ffffff; text-decoration: none; text-align: center; height: 10px; width: 30px; padding: 2px 2px; border-top-left-radius: 3px; border-top-right-radius: 3px; border-bottom-left-radius: 3px; border-bottom-right-radius: 3px;" href="%s">x</a>\n'
-                    % (urllib.parse.quote(linkname), html.escape(displayname), size_display, '?deletefile=' + html.escape(displayname)))
-        customwrite("</ul></ul>\n\n")
-        customwrite("<hr><small>Powered By: Gil, check new version ")
+            customwrite("<li>")
+            customwrite("<a class=\"file-link\" href=\"%s\">%s</a>" % (
+                urllib.parse.quote(linkname),
+                html.escape(displayname),
+            ))
+            customwrite("<div class=\"file-meta\">%s" % size_display)
+            customwrite("<a class=\"delete\" href=\"%s\">Delete</a>" % (
+                "?deletefile=" + html.escape(displayname),
+            ))
+            customwrite("</div></li>\n")
+        customwrite("</ul>\n")
+        customwrite("<div class=\"footer\">Powered By: Gil, check new version ")
         customwrite("<a href=\"https://github.com/adrianogil/simple-server\">")
-        customwrite("here</a>.</small></body>\n</html>\n")
+        customwrite("here</a>.</div>\n")
+        customwrite("</div>\n</div>\n</body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
