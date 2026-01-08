@@ -8,17 +8,18 @@ alias svl='simple-server-list'
 # Simple HTTP Server
 function simple-server()
 {
-    if [ -z "$1" ]
+    if [ -n "$1" ] && [[ "$1" != -* ]]
     then
-        port=8080
-    else
         port=$1
+        shift
+    else
+        port=8080
     fi
 
     local_path=$(echo ${PWD#"$HOME"} | tr "/" "_")
 
     echo "Lets run simple-server in port "$port" and in the path "$PWD
-    screen -S simpleserver-$port-$local_path -dm python3 $SIMPLE_SERVER_DIR/simpleserver.py $port
+    screen -S simpleserver-$port-$local_path -dm python3 $SIMPLE_SERVER_DIR/simpleserver.py $port "$@"
 }
 
 function simple-server-rnd()
