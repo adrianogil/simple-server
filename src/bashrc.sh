@@ -2,6 +2,7 @@
 alias simple-server-py='python3 $SIMPLE_SERVER_DIR/simpleserver.py'
 alias sv='simple-server'
 alias svl='simple-server-list'
+alias svo='simple-server-open'
 # Improved HTTP Server with upload and directory download
 # Based on https://gist.github.com/UniIsland/3346170#file-simplehttpserverwithupload-py
 # Based on https://stackoverflow.com/questions/2573670/download-whole-directories-in-python-simplehttpserver
@@ -36,6 +37,41 @@ function simple-server-running()
 function simple-server-list()
 {
     python3 $SIMPLE_SERVER_DIR/simpleserver.py list
+}
+
+function simple-server-open()
+{
+    list_output=$(simple-server-list)
+    if echo "$list_output" | grep -q "No running servers found."; then
+        echo "$list_output"
+        return 1
+    fi
+
+    mapfile -t server_lines < <(printf '%s\n' "$list_output" | tail -n +2 | sed '/^[[:space:]]*$/d')
+    if [ "${#server_lines[@]}" -eq 0 ]; then
+        echo "No running servers found."
+        return 1
+    fi
+
+    echo "Select a server to open:"
+    index=1
+    for line in "${server_lines[@]}"; do
+        IFS=$'\t' read -r pid address port started cwd <<< "$line"
+        printf "%2d) %s:%s (%s) %s\n" "$index" "$address" "$port" "$started" "$cwd"
+        index=$((index + 1))
+    done
+
+    read -r -p "Enter selection [1-${#server_lines[@]}]: " selection
+    if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "${#server_lines[@]}" ]; then
+        echo "Invalid selection."
+        return 1
+    fi
+
+    IFS=$'\t' read -r pid address port started cwd <<< "${server_lines[$((selection - 1))]}"
+    if [ "$address" = "0.0.0.0" ]; then
+        address="localhost"
+    fi
+    open-url "http://${address}:${port}/"
 }
 
 function simple-upload()
