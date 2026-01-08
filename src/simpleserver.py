@@ -167,8 +167,22 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Set-Cookie", cookie_value)
         self.end_headers()
 
+    def handle_logout(self):
+        token = self.get_session_token()
+        if token:
+            with self.session_lock:
+                self.session_store.pop(token, None)
+        self.send_response(303)
+        self.send_header("Location", "/__login__")
+        cookie_value = f"{self.session_cookie_name}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax"
+        self.send_header("Set-Cookie", cookie_value)
+        self.end_headers()
+
     def do_GET(self):
         """Serve a GET request."""
+        if self.path.startswith("/__logout__"):
+            self.handle_logout()
+            return
         if self.path.startswith("/__login__"):
             f = self.render_login_page(next_path="/")
             if f:
@@ -537,6 +551,8 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("<button class=\"btn secondary\" type=\"button\" onclick=\"" + js_action_create_folder + "\">Create</button>")
         customwrite("</form>\n")
         customwrite("<a class=\"btn\" href='%s'>Download zip</a>\n" % (self.path + "?download",))
+        if self.server_password:
+            customwrite("<a class=\"btn secondary\" href='/__logout__'>Logout</a>\n")
         customwrite("</div>\n")
         customwrite("<ul class=\"list\">\n")
         if self.path != "/":
