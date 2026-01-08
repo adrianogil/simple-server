@@ -22,6 +22,10 @@ import shutil
 import mimetypes
 import re
 from io import BytesIO
+import atexit
+import json
+import signal
+import time
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -526,6 +530,85 @@ except ImportError:
 class ThreadingSimpleServer(ThreadingMixIn, HTTPServer):
     pass
 
+REGISTRY_DIR = os.path.join(os.path.expanduser("~"), ".simple-server")
+REGISTRY_PATH = os.path.join(REGISTRY_DIR, "servers.json")
+
+
+def load_registry():
+    if not os.path.exists(REGISTRY_PATH):
+        return []
+    with open(REGISTRY_PATH, "r", encoding="utf-8") as handle:
+        try:
+            return json.load(handle)
+        except json.JSONDecodeError:
+            return []
+
+
+def save_registry(entries):
+    os.makedirs(REGISTRY_DIR, exist_ok=True)
+    with open(REGISTRY_PATH, "w", encoding="utf-8") as handle:
+        json.dump(entries, handle, indent=2)
+
+
+def process_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def list_servers():
+    entries = load_registry()
+    active = []
+    for entry in entries:
+        pid = entry.get("pid")
+        if pid and process_alive(pid):
+            active.append(entry)
+    if active != entries:
+        save_registry(active)
+    if not active:
+        print("No running servers found.")
+        return
+    print("PID\tADDRESS\tPORT\tCWD\tSTARTED")
+    for entry in active:
+        started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry.get("started_at", 0)))
+        print(
+            f"{entry.get('pid')}\t{entry.get('interface')}\t{entry.get('port')}\t"
+            f"{entry.get('cwd')}\t{started}"
+        )
+
+
+def register_server(interface, port, cwd):
+    entry = {
+        "pid": os.getpid(),
+        "interface": interface,
+        "port": port,
+        "cwd": cwd,
+        "started_at": time.time(),
+    }
+    entries = load_registry()
+    entries = [item for item in entries if item.get("pid") != entry["pid"]]
+    entries.append(entry)
+    save_registry(entries)
+
+
+def deregister_server():
+    entries = load_registry()
+    pid = os.getpid()
+    entries = [item for item in entries if item.get("pid") != pid]
+    save_registry(entries)
+
+
+def handle_exit(signum, frame):
+    deregister_server()
+    raise KeyboardInterrupt
+
+
+if sys.argv[1:] and sys.argv[1] == "list":
+    list_servers()
+    sys.exit(0)
+
 if sys.argv[1:]:
     address = sys.argv[1]
     if (':' in address):
@@ -546,11 +629,16 @@ print('Started HTTP server on ' +  interface + ':' + str(port))
 
 def run_server():
     server = ThreadingSimpleServer((interface, port), SimpleHTTPRequestHandler)
+    register_server(interface, port, os.getcwd())
+    atexit.register(deregister_server)
+    signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
     try:
         while 1:
             sys.stdout.flush()
             server.handle_request()
     except KeyboardInterrupt:
+        deregister_server()
         print('Finished.')
 
 if __name__ == '__main__':
