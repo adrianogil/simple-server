@@ -1,5 +1,7 @@
 # @tool simple-http-server
 alias simple-server-py='python3 $SIMPLE_SERVER_DIR/simpleserver.py'
+alias sv='simple-server'
+alias svl='simple-server-list'
 # Improved HTTP Server with upload and directory download
 # Based on https://gist.github.com/UniIsland/3346170#file-simplehttpserverwithupload-py
 # Based on https://stackoverflow.com/questions/2573670/download-whole-directories-in-python-simplehttpserver
@@ -28,6 +30,11 @@ function simple-server-rnd()
 function simple-server-running()
 {
     screen -list | grep httpserver | awk '{print $1}'
+}
+
+function simple-server-list()
+{
+    python3 $SIMPLE_SERVER_DIR/simpleserver.py list
 }
 
 function simple-upload()
