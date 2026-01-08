@@ -26,6 +26,8 @@ import atexit
 import json
 import signal
 import time
+import secrets
+from http import cookies
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -56,9 +58,129 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     """
 
     server_version = "SimpleHTTPWithUpload/" + __version__
+    server_password = None
+    session_duration_seconds = 1800
+    session_cookie_name = "SimpleServerSession"
+    session_store = {}
+    session_lock = threading.Lock()
+
+    def cleanup_expired_sessions(self):
+        now = time.time()
+        with self.session_lock:
+            expired = [token for token, expires_at in self.session_store.items() if expires_at <= now]
+            for token in expired:
+                self.session_store.pop(token, None)
+
+    def get_session_token(self):
+        raw_cookie = self.headers.get("Cookie")
+        if not raw_cookie:
+            return None
+        parsed = cookies.SimpleCookie()
+        parsed.load(raw_cookie)
+        if self.session_cookie_name not in parsed:
+            return None
+        return parsed[self.session_cookie_name].value
+
+    def is_authenticated(self):
+        if not self.server_password:
+            return True
+        self.cleanup_expired_sessions()
+        token = self.get_session_token()
+        if not token:
+            return False
+        with self.session_lock:
+            expires_at = self.session_store.get(token)
+        if not expires_at or expires_at <= time.time():
+            return False
+        return True
+
+    def render_login_page(self, message="", next_path="/"):
+        f = BytesIO()
+
+        def customwrite(htmlstring):
+            f.write(htmlstring.encode('utf-8'))
+
+        customwrite("<!DOCTYPE html>\n")
+        customwrite("<html lang=\"en\">\n")
+        customwrite("<head>\n")
+        customwrite("<meta charset=\"utf-8\">\n")
+        customwrite("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+        customwrite("<title>Server Login</title>\n")
+        customwrite("<style>\n")
+        customwrite("body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;"
+                    "background:#f5f7fb;color:#1f2937;margin:0;padding:32px;}\n")
+        customwrite(".card{max-width:420px;margin:0 auto;background:#fff;border-radius:14px;"
+                    "box-shadow:0 10px 30px rgba(15,23,42,.08);padding:28px;}\n")
+        customwrite(".title{font-size:22px;margin:0 0 8px;}\n")
+        customwrite(".subtitle{color:#64748b;font-size:14px;margin:0 0 18px;}\n")
+        customwrite(".message{color:#dc2626;font-size:14px;margin-bottom:12px;}\n")
+        customwrite("label{display:block;font-size:14px;margin-bottom:6px;}\n")
+        customwrite("input[type='password']{width:100%;padding:10px 12px;border-radius:8px;"
+                    "border:1px solid #e2e8f0;font-size:14px;}\n")
+        customwrite(".btn{margin-top:14px;background:#2563eb;color:#fff;border:none;border-radius:8px;"
+                    "padding:10px 14px;font-size:14px;cursor:pointer;width:100%;}\n")
+        customwrite("</style>\n")
+        customwrite("</head>\n")
+        customwrite("<body>\n")
+        customwrite("<div class=\"card\">\n")
+        customwrite("<h2 class=\"title\">Password required</h2>\n")
+        customwrite("<p class=\"subtitle\">Enter the server password to continue.</p>\n")
+        if message:
+            customwrite("<div class=\"message\">%s</div>\n" % html.escape(message))
+        customwrite("<form method=\"post\" action=\"/__login__\">\n")
+        customwrite("<input type=\"hidden\" name=\"next\" value=\"%s\">\n" % html.escape(next_path))
+        customwrite("<label for=\"password\">Password</label>\n")
+        customwrite("<input id=\"password\" name=\"password\" type=\"password\" autofocus required>\n")
+        customwrite("<button class=\"btn\" type=\"submit\">Sign in</button>\n")
+        customwrite("</form>\n")
+        customwrite("</div>\n")
+        customwrite("</body>\n</html>\n")
+        length = f.tell()
+        f.seek(0)
+        self.send_response(401)
+        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(length))
+        self.end_headers()
+        return f
+
+    def handle_login(self):
+        length = int(self.headers.get("Content-Length", 0))
+        raw_body = self.rfile.read(length).decode("utf-8")
+        form = urllib.parse.parse_qs(raw_body)
+        password = form.get("password", [""])[0]
+        next_path = form.get("next", ["/"])[0] or "/"
+        if password != self.server_password:
+            f = self.render_login_page("Incorrect password.", next_path)
+            if f:
+                self.copyfile(f, self.wfile)
+                f.close()
+            return
+        token = secrets.token_urlsafe(32)
+        expires_at = time.time() + self.session_duration_seconds
+        with self.session_lock:
+            self.session_store[token] = expires_at
+        self.send_response(303)
+        self.send_header("Location", next_path)
+        cookie_value = (
+            f"{self.session_cookie_name}={token}; HttpOnly; Path=/; Max-Age={self.session_duration_seconds}; SameSite=Lax"
+        )
+        self.send_header("Set-Cookie", cookie_value)
+        self.end_headers()
 
     def do_GET(self):
         """Serve a GET request."""
+        if self.path.startswith("/__login__"):
+            f = self.render_login_page(next_path="/")
+            if f:
+                self.copyfile(f, self.wfile)
+                f.close()
+            return
+        if self.server_password and not self.is_authenticated():
+            f = self.render_login_page(next_path=self.path)
+            if f:
+                self.copyfile(f, self.wfile)
+                f.close()
+            return
         f = self.send_head()
         if f:
             self.copyfile(f, self.wfile)
@@ -66,12 +188,28 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         """Serve a HEAD request."""
+        if self.server_password and not self.is_authenticated():
+            self.send_response(401)
+            self.end_headers()
+            return
         f = self.send_head()
         if f:
             f.close()
 
     def do_POST(self):
         """Serve a POST request."""
+        if self.path.startswith("/__login__"):
+            if not self.server_password:
+                self.send_error(404, "Login not configured")
+                return
+            self.handle_login()
+            return
+        if self.server_password and not self.is_authenticated():
+            f = self.render_login_page(next_path=self.path)
+            if f:
+                self.copyfile(f, self.wfile)
+                f.close()
+            return
         r, info = self.deal_post_data()
         print(r, info, "by: ", self.client_address)
         f = BytesIO()
@@ -605,12 +743,31 @@ def handle_exit(signum, frame):
     raise KeyboardInterrupt
 
 
-if sys.argv[1:] and sys.argv[1] == "list":
+def parse_args(argv):
+    password = None
+    remaining = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg in ("--password", "-pwd"):
+            if index + 1 >= len(argv):
+                raise ValueError("Missing value for --password/-pwd option.")
+            password = argv[index + 1]
+            index += 2
+            continue
+        remaining.append(arg)
+        index += 1
+    return remaining, password
+
+
+args, server_password = parse_args(sys.argv[1:])
+
+if args and args[0] == "list":
     list_servers()
     sys.exit(0)
 
-if sys.argv[1:]:
-    address = sys.argv[1]
+if args:
+    address = args[0]
     if (':' in address):
         interface = address.split(':')[0]
         port = int(address.split(':')[1])
@@ -621,8 +778,10 @@ else:
     port = 8000
     interface = '0.0.0.0'
 
-if sys.argv[2:]:
-    os.chdir(sys.argv[2])
+if len(args) > 1:
+    os.chdir(args[1])
+
+SimpleHTTPRequestHandler.server_password = server_password
 
 print('Started HTTP server on ' +  interface + ':' + str(port))
 
