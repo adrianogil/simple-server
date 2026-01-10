@@ -47,7 +47,14 @@ function simple-server-open()
         return 1
     fi
 
-    mapfile -t server_lines < <(printf '%s\n' "$list_output" | tail -n +2 | sed '/^[[:space:]]*$/d')
+    if [ -n "$ZSH_VERSION" ]; then
+        typeset -a server_lines
+    else
+        server_lines=()
+    fi
+    while IFS= read -r line; do
+        server_lines+=("$line")
+    done < <(printf '%s\n' "$list_output" | tail -n +2 | sed '/^[[:space:]]*$/d')
     if [ "${#server_lines[@]}" -eq 0 ]; then
         echo "No running servers found."
         return 1
@@ -61,7 +68,12 @@ function simple-server-open()
         index=$((index + 1))
     done
 
-    read -r -p "Enter selection [1-${#server_lines[@]}]: " selection
+    printf "Enter selection [1-%s]: " "${#server_lines[@]}"
+    if [ -n "$ZSH_VERSION" ]; then
+        read -r selection
+    else
+        read -r selection
+    fi
     if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "${#server_lines[@]}" ]; then
         echo "Invalid selection."
         return 1
