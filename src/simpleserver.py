@@ -733,6 +733,22 @@ def list_servers():
         )
 
 
+def list_servers_porcelain():
+    entries = load_registry()
+    active = []
+    for entry in entries:
+        pid = entry.get("pid")
+        if pid and process_alive(pid):
+            active.append(entry)
+    if active != entries:
+        save_registry(active)
+    if not active:
+        print("No running servers found.")
+        return
+    for entry in active:
+        print(f"{entry.get('port')}\t{entry.get('cwd')}")
+
+
 def register_server(interface, port, cwd):
     entry = {
         "pid": os.getpid(),
@@ -779,7 +795,10 @@ def parse_args(argv):
 args, server_password = parse_args(sys.argv[1:])
 
 if args and args[0] == "list":
-    list_servers()
+    if len(args) > 1 and args[1] == "--porcelain":
+        list_servers_porcelain()
+    else:
+        list_servers()
     sys.exit(0)
 
 if args:

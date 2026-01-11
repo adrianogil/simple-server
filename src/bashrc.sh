@@ -2,6 +2,7 @@
 alias simple-server-py='python3 $SIMPLE_SERVER_DIR/simpleserver.py'
 alias sv='simple-server'
 alias svl='simple-server-list'
+alias svo='simple-server-open'
 # Improved HTTP Server with upload and directory download
 # Based on https://gist.github.com/UniIsland/3346170#file-simplehttpserverwithupload-py
 # Based on https://stackoverflow.com/questions/2573670/download-whole-directories-in-python-simplehttpserver
@@ -36,6 +37,26 @@ function simple-server-running()
 function simple-server-list()
 {
     python3 $SIMPLE_SERVER_DIR/simpleserver.py list
+}
+
+function simple-server-open()
+{
+    if ! command -v fzf >/dev/null 2>&1; then
+        echo "fzf is required to select a server."
+        return 1
+    fi
+
+    selection=$(python3 $SIMPLE_SERVER_DIR/simpleserver.py list --porcelain | fzf --prompt="Select server: ")
+    if [ -z "$selection" ]; then
+        return 1
+    fi
+
+    IFS=$'\t' read -r port cwd <<< "$selection"
+    if [ -z "$port" ]; then
+        echo "No running servers found."
+        return 1
+    fi
+    open-url "http://localhost:${port}/"
 }
 
 function simple-upload()
