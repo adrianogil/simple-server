@@ -724,6 +724,27 @@ def list_servers():
     if not active:
         print("No running servers found.")
         return
+    print("PID\tADDRESS\tPORT\tSTARTED\tCWD")
+    for entry in active:
+        started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry.get("started_at", 0)))
+        print(
+            f"{entry.get('pid')}\t{entry.get('interface')}\t{entry.get('port')}\t"
+            f"{started}\t{entry.get('cwd')}"
+        )
+
+
+def list_servers_porcelain():
+    entries = load_registry()
+    active = []
+    for entry in entries:
+        pid = entry.get("pid")
+        if pid and process_alive(pid):
+            active.append(entry)
+    if active != entries:
+        save_registry(active)
+    if not active:
+        print("No running servers found.")
+        return
     for entry in active:
         print(f"{entry.get('port')}\t{entry.get('cwd')}")
 
@@ -774,7 +795,10 @@ def parse_args(argv):
 args, server_password = parse_args(sys.argv[1:])
 
 if args and args[0] == "list":
-    list_servers()
+    if len(args) > 1 and args[1] == "--porcelain":
+        list_servers_porcelain()
+    else:
+        list_servers()
     sys.exit(0)
 
 if args:

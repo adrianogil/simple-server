@@ -46,7 +46,7 @@ function simple-server-open()
         return 1
     fi
 
-    selection=$(simple-server-list | fzf --prompt="Select server: ")
+    selection=$(python3 $SIMPLE_SERVER_DIR/simpleserver.py list --porcelain | fzf --prompt="Select server: ")
     if [ -z "$selection" ]; then
         return 1
     fi
