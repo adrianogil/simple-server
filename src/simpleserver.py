@@ -724,13 +724,8 @@ def list_servers():
     if not active:
         print("No running servers found.")
         return
-    print("PID\tADDRESS\tPORT\tSTARTED\tCWD")
     for entry in active:
-        started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry.get("started_at", 0)))
-        print(
-            f"{entry.get('pid')}\t{entry.get('interface')}\t{entry.get('port')}\t"
-            f"{started}\t{entry.get('cwd')}"
-        )
+        print(f"{entry.get('port')}\t{entry.get('cwd')}")
 
 
 def register_server(interface, port, cwd):

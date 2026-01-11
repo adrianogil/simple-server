@@ -41,49 +41,22 @@ function simple-server-list()
 
 function simple-server-open()
 {
-    list_output=$(simple-server-list)
-    if echo "$list_output" | grep -q "No running servers found."; then
-        echo "$list_output"
+    if ! command -v fzf >/dev/null 2>&1; then
+        echo "fzf is required to select a server."
         return 1
     fi
 
-    if [ -n "$ZSH_VERSION" ]; then
-        typeset -a server_lines
-    else
-        server_lines=()
+    selection=$(simple-server-list | fzf --prompt="Select server: ")
+    if [ -z "$selection" ]; then
+        return 1
     fi
-    while IFS= read -r line; do
-        server_lines+=("$line")
-    done < <(printf '%s\n' "$list_output" | tail -n +2 | sed '/^[[:space:]]*$/d')
-    if [ "${#server_lines[@]}" -eq 0 ]; then
+
+    IFS=$'\t' read -r port cwd <<< "$selection"
+    if [ -z "$port" ]; then
         echo "No running servers found."
         return 1
     fi
-
-    echo "Select a server to open:"
-    index=1
-    for line in "${server_lines[@]}"; do
-        IFS=$'\t' read -r pid address port started cwd <<< "$line"
-        printf "%2d) %s:%s (%s) %s\n" "$index" "$address" "$port" "$started" "$cwd"
-        index=$((index + 1))
-    done
-
-    printf "Enter selection [1-%s]: " "${#server_lines[@]}"
-    if [ -n "$ZSH_VERSION" ]; then
-        read -r selection
-    else
-        read -r selection
-    fi
-    if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "${#server_lines[@]}" ]; then
-        echo "Invalid selection."
-        return 1
-    fi
-
-    IFS=$'\t' read -r pid address port started cwd <<< "${server_lines[$((selection - 1))]}"
-    if [ "$address" = "0.0.0.0" ]; then
-        address="localhost"
-    fi
-    open-url "http://${address}:${port}/"
+    open-url "http://localhost:${port}/"
 }
 
 function simple-upload()
