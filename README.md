@@ -17,7 +17,7 @@ Simple HTTP server in Python with a modern, browser-friendly UI.
 
 ## Usage
 ```bash
-python src/simpleserver.py [address:port] [path] [--password <value> | -pwd <value>]
+python src/simpleserver.py [address:port] [path] [--password <value> | -pwd <value>] [--single-file <path> | -sf <path>]
 ```
 
 ### Examples
@@ -39,6 +39,11 @@ python src/simpleserver.py 8000 /path/to/share
 Enable password protection:
 ```bash
 python src/simpleserver.py 8000 /path/to/share --password "super-secret"
+```
+
+Serve a single file (no directory listing or access to other files):
+```bash
+python src/simpleserver.py 8000 --single-file /path/to/file.pdf
 ```
 
 List running servers:
