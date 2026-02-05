@@ -17,9 +17,24 @@ function simple-server()
         port=8080
     fi
 
-    local_path=$(echo ${PWD#"$HOME"} | tr "/" "_")
+    if [ -n "$1" ] && [ -d "$1" ]; then
+        target_path=$(cd "$1" && pwd)
+    else
+        target_path=$PWD
+    fi
 
-    echo "Lets run simple-server in port "$port" and in the path "$PWD
+    existing_port=$(simple-server-find-existing "$target_path")
+    if [ -n "$existing_port" ]; then
+        echo "A server is already running for $target_path on port $existing_port."
+        if ! simple-server-confirm "Start another server? [y/N] "; then
+            open-url "http://localhost:${existing_port}/"
+            return 0
+        fi
+    fi
+
+    local_path=$(echo ${target_path#"$HOME"} | tr "/" "_")
+
+    echo "Lets run simple-server in port "$port" and in the path "$target_path
     screen -S simpleserver-$port-$local_path -dm python3 $SIMPLE_SERVER_DIR/simpleserver.py $port "$@"
 }
 
@@ -70,8 +85,55 @@ function simple-upload()
 function simple-html-serve()
 {
     target_html=$1
+
+    existing_port=$(simple-server-find-existing "$PWD")
+    if [ -n "$existing_port" ]; then
+        echo "A server is already running for $PWD on port $existing_port."
+        if ! simple-server-confirm "Start another server? [y/N] "; then
+            open-url "http://localhost:${existing_port}/${target_html}"
+            return 0
+        fi
+    fi
+
     port=$(rnd-port)
     simple-server $port
     echo "Serve HTML file on port "$port
     open-url http://localhost:$port/$target_html
+}
+
+function simple-server-find-existing()
+{
+    target_path=$1
+    if [ -z "$target_path" ]; then
+        return 1
+    fi
+
+    python3 $SIMPLE_SERVER_DIR/simpleserver.py list --porcelain 2>/dev/null | \
+        while IFS=$'\t' read -r port cwd; do
+            if [ "$cwd" = "$target_path" ]; then
+                echo "$port"
+                break
+            fi
+        done
+}
+
+function simple-server-confirm()
+{
+    prompt=$1
+    if [ -t 0 ]; then
+        printf "%s" "$prompt" >/dev/tty
+        read -r reply </dev/tty
+    else
+        printf "%s" "$prompt" >&2
+        return 1
+    fi
+
+    case "$reply" in
+        [yY][eE][sS]|[yY])
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
