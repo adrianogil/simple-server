@@ -59,6 +59,8 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     server_version = "SimpleHTTPWithUpload/" + __version__
     server_password = None
+    single_file_path = None
+    single_file_url = None
     session_duration_seconds = 1800
     session_cookie_name = "SimpleServerSession"
     session_store = {}
@@ -254,6 +256,9 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             if f:
                 self.copyfile(f, self.wfile)
                 f.close()
+            return
+        if self.single_file_path:
+            self.send_error(403, "Uploads are disabled in single file mode")
             return
         r, info = self.deal_post_data()
         print(r, info, "by: ", self.client_address)
@@ -545,9 +550,17 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         None, in which case the caller has nothing further to do.
 
         """
-        path = self.translate_path(self.path)
         print("send_head - path: " + str(self.path))
         f = None
+        if self.single_file_path:
+            if "?deletefile=" in self.path or "?createfolder=" in self.path or self.path.endswith("?download"):
+                self.send_error(403, "Action not allowed in single file mode")
+                return None
+            if not self.is_single_file_request(self.path):
+                self.send_error(404, "File not found")
+                return None
+            return self.send_single_file()
+        path = self.translate_path(self.path)
         if '?deletefile=' in self.path:
             index = self.path.index('?deletefile=')
             file_to_be_deleted = self.path[index + 12:]
@@ -608,6 +621,9 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         interface the same as for send_head().
 
         """
+        if self.single_file_path:
+            self.send_error(404, "File not found")
+            return None
         try:
             list = os.listdir(path)
         except os.error:
@@ -758,6 +774,32 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         encoding = sys.getfilesystemencoding()
         self.send_header("Content-type", "text/html; charset=%s" % encoding)
         self.send_header("Content-Length", str(length))
+        self.end_headers()
+        return f
+
+    def is_single_file_request(self, request_path):
+        if not self.single_file_path:
+            return False
+        clean_path = request_path.split('?', 1)[0].split('#', 1)[0]
+        if clean_path in ("", "/"):
+            return True
+        return clean_path == self.single_file_url
+
+    def send_single_file(self):
+        if not self.single_file_path or not os.path.isfile(self.single_file_path):
+            self.send_error(404, "File not found")
+            return None
+        try:
+            f = open(self.single_file_path, 'rb')
+        except IOError:
+            self.send_error(404, "File not found")
+            return None
+        ctype = self.guess_type(self.single_file_path)
+        self.send_response(200)
+        self.send_header("Content-type", ctype)
+        fs = os.fstat(f.fileno())
+        self.send_header("Content-Length", str(fs[6]))
+        self.send_header("Last-Modified", self.date_time_string(fs.st_mtime))
         self.end_headers()
         return f
 
@@ -938,6 +980,7 @@ def handle_exit(signum, frame):
 
 def parse_args(argv):
     password = None
+    single_file = None
     remaining = []
     index = 0
     while index < len(argv):
@@ -948,12 +991,19 @@ def parse_args(argv):
             password = argv[index + 1]
             index += 2
             continue
+        if arg in ("--single-file", "-sf"):
+            if index + 1 >= len(argv):
+                raise ValueError("Missing value for --single-file/-sf option.")
+            single_file = argv[index + 1]
+            index += 2
+            continue
         remaining.append(arg)
         index += 1
-    return remaining, password
+    return remaining, password, single_file
 
 
-args, server_password = parse_args(sys.argv[1:])
+args, server_password, single_file = parse_args(sys.argv[1:])
+single_file_path = os.path.abspath(single_file) if single_file else None
 
 if args and args[0] == "list":
     if len(args) > 1 and args[1] == "--porcelain":
@@ -978,6 +1028,12 @@ if len(args) > 1:
     os.chdir(args[1])
 
 SimpleHTTPRequestHandler.server_password = server_password
+if single_file_path:
+    if not os.path.isfile(single_file_path):
+        print("Single file does not exist: " + single_file_path)
+        sys.exit(1)
+    SimpleHTTPRequestHandler.single_file_path = single_file_path
+    SimpleHTTPRequestHandler.single_file_url = "/" + urllib.parse.quote(os.path.basename(single_file_path))
 
 print('Started HTTP server on ' +  interface + ':' + str(port))
 
