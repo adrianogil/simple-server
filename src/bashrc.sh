@@ -1,12 +1,9 @@
-# @tool simple-http-server
 alias simple-server-py='python3 $SIMPLE_SERVER_DIR/simpleserver.py'
 alias sv='simple-server'
 alias svl='simple-server-list'
 alias svo='simple-server-open'
-# Improved HTTP Server with upload and directory download
-# Based on https://gist.github.com/UniIsland/3346170#file-simplehttpserverwithupload-py
-# Based on https://stackoverflow.com/questions/2573670/download-whole-directories-in-python-simplehttpserver
-# Simple HTTP Server
+alias svh-='simple-html-serve'
+
 function simple-server()
 {
     if [ -n "$1" ] && [[ "$1" != -* ]]
