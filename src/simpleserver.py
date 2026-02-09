@@ -613,12 +613,50 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         except os.error:
             self.send_error(404, "No permission to list directory")
             return None
-        list.sort(key=lambda a: a.lower())
+        parsed_path = urllib.parse.urlsplit(self.path)
+        base_path = parsed_path.path
+        query_params = urllib.parse.parse_qs(parsed_path.query)
+        sort_key = query_params.get("sort", ["name"])[0]
+        sort_order = query_params.get("order", ["asc"])[0]
+        valid_sort_keys = {"name", "size", "created", "updated"}
+        if sort_key not in valid_sort_keys:
+            sort_key = "name"
+        if sort_order not in {"asc", "desc"}:
+            sort_order = "asc"
+
+        def sort_value(entry):
+            fullname = os.path.join(path, entry)
+            if sort_key == "size":
+                if os.path.isdir(fullname):
+                    value = 0
+                else:
+                    try:
+                        value = os.path.getsize(fullname)
+                    except OSError:
+                        value = 0
+                return (value, entry.lower())
+            if sort_key == "created":
+                try:
+                    value = os.path.getctime(fullname)
+                except OSError:
+                    value = 0
+                return (value, entry.lower())
+            if sort_key == "updated":
+                try:
+                    value = os.path.getmtime(fullname)
+                except OSError:
+                    value = 0
+                return (value, entry.lower())
+            return entry.lower()
+
+        list.sort(key=sort_value, reverse=(sort_order == "desc"))
         f = BytesIO()
-        displaypath = html.escape(urllib.parse.unquote(self.path))
+        displaypath = html.escape(urllib.parse.unquote(base_path))
+        sort_query = urllib.parse.urlencode({"sort": sort_key, "order": sort_order})
+        sort_suffix = ("?" + sort_query) if sort_query else ""
 
         js_action_create_folder = "window.open('%s' + document.getElementById('folderName').value,'_self')" % (
-                self.path.strip() + "?createfolder=",
+                base_path.strip() + "?createfolder=",
             )
 
         def customwrite(htmlstring):
@@ -658,7 +696,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite(".actions form{display:flex;align-items:center;gap:8px;"
                     "background:var(--surface);padding:10px 12px;border-radius:12px;"
                     "border:1px solid var(--border);}\n")
-        customwrite("input[type='text'],input[type='file']{font-size:14px;}\n")
+        customwrite("input[type='text'],input[type='file'],select{font-size:14px;}\n")
         customwrite(".btn{background:var(--primary);color:#fff;border:none;border-radius:8px;"
                     "padding:8px 12px;font-size:14px;cursor:pointer;}\n")
         customwrite(".btn.secondary{background:var(--secondary);}\n")
@@ -689,14 +727,35 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("<input type=\"text\" id=\"folderName\" placeholder=\"New folder\">")
         customwrite("<button class=\"btn secondary\" type=\"button\" onclick=\"" + js_action_create_folder + "\">Create</button>")
         customwrite("</form>\n")
-        customwrite("<a class=\"btn\" href='%s'>Download zip</a>\n" % (self.path + "?download",))
+        customwrite("<form method=\"get\" action=\"%s\">" % html.escape(base_path))
+        customwrite("<label for=\"sortBy\"><small>Sort by:</small></label>")
+        customwrite("<select id=\"sortBy\" name=\"sort\">")
+        sort_labels = {
+            "name": "Name",
+            "size": "Size",
+            "created": "Date created",
+            "updated": "Date updated",
+        }
+        for option_key, option_label in sort_labels.items():
+            selected = " selected" if option_key == sort_key else ""
+            customwrite("<option value=\"%s\"%s>%s</option>" % (option_key, selected, option_label))
+        customwrite("</select>")
+        customwrite("<select name=\"order\">")
+        order_labels = {"asc": "Ascending", "desc": "Descending"}
+        for option_key, option_label in order_labels.items():
+            selected = " selected" if option_key == sort_order else ""
+            customwrite("<option value=\"%s\"%s>%s</option>" % (option_key, selected, option_label))
+        customwrite("</select>")
+        customwrite("<button class=\"btn secondary\" type=\"submit\">Apply</button>")
+        customwrite("</form>\n")
+        customwrite("<a class=\"btn\" href='%s'>Download zip</a>\n" % (base_path + "?download",))
         customwrite("<button class=\"btn secondary\" type=\"button\" id=\"theme-toggle\">Light mode</button>\n")
         if self.server_password:
             customwrite("<a class=\"btn secondary\" href='/__logout__'>Logout</a>\n")
         customwrite("</div>\n")
         customwrite("<ul class=\"list\">\n")
-        if self.path != "/":
-            customwrite('<li><a href="%s">..</a>\n' % (urllib.parse.quote(self.path + ".."),))
+        if base_path != "/":
+            customwrite('<li><a href="%s">..</a>\n' % (urllib.parse.quote(base_path + "..") + sort_suffix,))
         for name in list:
             fullname = os.path.join(path, name)
             displayname = linkname = name
@@ -717,8 +776,11 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                 displayname = name + "@"
                 # Note: a link to a directory displays with @ and links with /
             customwrite("<li>")
+            link_target = urllib.parse.quote(linkname)
+            if os.path.isdir(fullname):
+                link_target += sort_suffix
             customwrite("<a class=\"file-link\" href=\"%s\">%s</a>" % (
-                urllib.parse.quote(linkname),
+                link_target,
                 html.escape(displayname),
             ))
             customwrite("<div class=\"file-meta\">%s" % size_display)
