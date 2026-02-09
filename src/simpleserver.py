@@ -692,14 +692,23 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite(".header{display:flex;flex-direction:column;gap:6px;margin-bottom:18px;}\n")
         customwrite(".header h2{margin:0;font-size:24px;}\n")
         customwrite(".header .path{color:var(--muted);font-size:14px;}\n")
-        customwrite(".actions{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:18px;}\n")
-        customwrite(".actions form{display:flex;align-items:center;gap:8px;"
-                    "background:var(--surface);padding:10px 12px;border-radius:12px;"
+        customwrite(".actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));"
+                    "gap:12px;margin-bottom:18px;}\n")
+        customwrite(".actions form,.actions .action-card{display:flex;align-items:center;gap:8px;"
+                    "background:var(--surface);padding:12px 14px;border-radius:12px;"
                     "border:1px solid var(--border);}\n")
-        customwrite("input[type='text'],input[type='file'],select{font-size:14px;}\n")
-        customwrite(".btn{background:var(--primary);color:#fff;border:none;border-radius:8px;"
-                    "padding:8px 12px;font-size:14px;cursor:pointer;}\n")
+        customwrite(".actions label{font-size:12px;color:var(--muted);text-transform:uppercase;"
+                    "letter-spacing:.08em;}\n")
+        customwrite(".actions input[type='text']{flex:1;min-width:0;}\n")
+        customwrite(".actions select{min-width:0;}\n")
+        customwrite("input[type='text'],input[type='file'],select{font-size:14px;"
+                    "background:var(--card);color:var(--text);border-radius:8px;border:1px solid var(--border);"
+                    "padding:6px 8px;}\n")
+        customwrite(".btn{background:var(--primary);color:#fff;border:none;border-radius:10px;"
+                    "padding:8px 12px;font-size:14px;cursor:pointer;font-weight:600;}\n")
         customwrite(".btn.secondary{background:var(--secondary);}\n")
+        customwrite(".btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text);}\n")
+        customwrite(".action-buttons{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}\n")
         customwrite(".list{list-style:none;margin:0;padding:0;}\n")
         customwrite(".list li{display:flex;align-items:center;justify-content:space-between;"
                     "padding:10px 12px;border-bottom:1px solid var(--border);}\n")
@@ -720,15 +729,16 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("</div>\n")
         customwrite("<div class=\"actions\">\n")
         customwrite("<form ENCTYPE=\"multipart/form-data\" method=\"post\">")
-        customwrite("<input name=\"file\" type=\"file\"/>")
+        customwrite("<label for=\"fileUpload\">Upload</label>")
+        customwrite("<input id=\"fileUpload\" name=\"file\" type=\"file\"/>")
         customwrite("<button class=\"btn\" type=\"submit\">Upload</button></form>\n")
         customwrite("<form ENCTYPE=\"multipart/form-data\">")
-        customwrite("<label for=\"folderName\"><small>Create folder:</small></label>")
+        customwrite("<label for=\"folderName\">Create folder</label>")
         customwrite("<input type=\"text\" id=\"folderName\" placeholder=\"New folder\">")
         customwrite("<button class=\"btn secondary\" type=\"button\" onclick=\"" + js_action_create_folder + "\">Create</button>")
         customwrite("</form>\n")
         customwrite("<form method=\"get\" action=\"%s\">" % html.escape(base_path))
-        customwrite("<label for=\"sortBy\"><small>Sort by:</small></label>")
+        customwrite("<label for=\"sortBy\">Sort by</label>")
         customwrite("<select id=\"sortBy\" name=\"sort\">")
         sort_labels = {
             "name": "Name",
@@ -748,10 +758,14 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("</select>")
         customwrite("<button class=\"btn secondary\" type=\"submit\">Apply</button>")
         customwrite("</form>\n")
+        customwrite("<div class=\"action-card\">")
+        customwrite("<div class=\"action-buttons\">")
         customwrite("<a class=\"btn\" href='%s'>Download zip</a>\n" % (base_path + "?download",))
-        customwrite("<button class=\"btn secondary\" type=\"button\" id=\"theme-toggle\">Light mode</button>\n")
+        customwrite("<button class=\"btn ghost\" type=\"button\" id=\"theme-toggle\">Light mode</button>\n")
         if self.server_password:
-            customwrite("<a class=\"btn secondary\" href='/__logout__'>Logout</a>\n")
+            customwrite("<a class=\"btn ghost\" href='/__logout__'>Logout</a>\n")
+        customwrite("</div>")
+        customwrite("</div>\n")
         customwrite("</div>\n")
         customwrite("<ul class=\"list\">\n")
         if base_path != "/":
