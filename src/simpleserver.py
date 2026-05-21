@@ -713,14 +713,19 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         if self.server_password:
             customwrite("<a class=\"btn secondary\" href='/__logout__'>Logout</a>\n")
         customwrite("</div>\n")
-        opposite_order = "desc" if sort_order == "asc" else "asc"
         sort_by_name_link = "%s?sort=name&order=%s" % (parsed_url.path, sort_order)
         sort_by_updated_link = "%s?sort=updated&order=%s" % (parsed_url.path, sort_order)
-        toggle_order_link = "%s?sort=%s&order=%s" % (parsed_url.path, sort_mode, opposite_order)
         customwrite("<div class=\"actions\">")
         customwrite("<a class=\"btn secondary\" href=\"%s\">Sort by name</a>\n" % html.escape(sort_by_name_link))
         customwrite("<a class=\"btn secondary\" href=\"%s\">Sort by updated date</a>\n" % html.escape(sort_by_updated_link))
-        customwrite("<a class=\"btn secondary\" href=\"%s\">Order: %s</a>\n" % (html.escape(toggle_order_link), html.escape(sort_order.upper())))
+        customwrite("<form method=\"get\">")
+        customwrite("<input type=\"hidden\" name=\"sort\" value=\"%s\">" % html.escape(sort_mode))
+        customwrite("<label for=\"orderSelect\"><small>Order:</small></label>")
+        customwrite("<select id=\"orderSelect\" name=\"order\" onchange=\"this.form.submit()\">")
+        customwrite("<option value=\"asc\"%s>ASC</option>" % (" selected" if sort_order == "asc" else ""))
+        customwrite("<option value=\"desc\"%s>DESC</option>" % (" selected" if sort_order == "desc" else ""))
+        customwrite("</select>")
+        customwrite("</form>\n")
         customwrite("</div>\n")
         customwrite("<ul class=\"list\">\n")
         if self.path != "/":
