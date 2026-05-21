@@ -615,8 +615,8 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             return None
         parsed_url = urllib.parse.urlsplit(self.path)
         query = urllib.parse.parse_qs(parsed_url.query)
-        sort_mode = query.get("sort", ["name"])[0]
-        sort_order = query.get("order", ["asc"])[0]
+        sort_mode = query.get("sort", ["name"])[-1]
+        sort_order = query.get("order", ["asc"])[-1]
         reverse_sort = sort_order == "desc"
 
         entries = []
