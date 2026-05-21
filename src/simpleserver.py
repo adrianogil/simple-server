@@ -609,11 +609,30 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
         """
         try:
-            list = os.listdir(path)
+            names = os.listdir(path)
         except os.error:
             self.send_error(404, "No permission to list directory")
             return None
-        list.sort(key=lambda a: a.lower())
+        parsed_url = urllib.parse.urlsplit(self.path)
+        query = urllib.parse.parse_qs(parsed_url.query)
+        sort_mode = query.get("sort", ["name"])[-1]
+        sort_order = query.get("order", ["asc"])[-1]
+        reverse_sort = sort_order == "desc"
+
+        entries = []
+        for name in names:
+            fullname = os.path.join(path, name)
+            try:
+                stat_result = os.stat(fullname)
+                modified_time = stat_result.st_mtime
+            except OSError:
+                modified_time = 0
+            entries.append((name, modified_time))
+
+        if sort_mode == "updated":
+            entries.sort(key=lambda entry: entry[1], reverse=reverse_sort)
+        else:
+            entries.sort(key=lambda entry: entry[0].lower(), reverse=reverse_sort)
         f = BytesIO()
         displaypath = html.escape(urllib.parse.unquote(self.path))
 
@@ -694,15 +713,30 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         if self.server_password:
             customwrite("<a class=\"btn secondary\" href='/__logout__'>Logout</a>\n")
         customwrite("</div>\n")
+        sort_by_name_link = "%s?sort=name&order=%s" % (parsed_url.path, sort_order)
+        sort_by_updated_link = "%s?sort=updated&order=%s" % (parsed_url.path, sort_order)
+        customwrite("<div class=\"actions\">")
+        customwrite("<a class=\"btn secondary\" href=\"%s\">Sort by name</a>\n" % html.escape(sort_by_name_link))
+        customwrite("<a class=\"btn secondary\" href=\"%s\">Sort by updated date</a>\n" % html.escape(sort_by_updated_link))
+        customwrite("<form method=\"get\" action=\"%s\">" % html.escape(parsed_url.path))
+        customwrite("<input type=\"hidden\" name=\"sort\" value=\"%s\">" % html.escape(sort_mode))
+        customwrite("<label for=\"orderSelect\"><small>Order:</small></label>")
+        customwrite("<select id=\"orderSelect\" name=\"order\" onchange=\"this.form.submit()\">")
+        customwrite("<option value=\"asc\"%s>ASC</option>" % (" selected" if sort_order == "asc" else ""))
+        customwrite("<option value=\"desc\"%s>DESC</option>" % (" selected" if sort_order == "desc" else ""))
+        customwrite("</select>")
+        customwrite("</form>\n")
+        customwrite("</div>\n")
         customwrite("<ul class=\"list\">\n")
         if self.path != "/":
             customwrite('<li><a href="%s">..</a>\n' % (urllib.parse.quote(self.path + ".."),))
-        for name in list:
+        for name, modified_time in entries:
             fullname = os.path.join(path, name)
             displayname = linkname = name
             # Append / for directories or @ for symbolic links
 
             size_display = ""
+            updated_display = "<span>Updated: %s</span>" % (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(modified_time)))
 
             if os.path.isdir(fullname):
                 displayname = name + "/"
@@ -721,7 +755,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                 urllib.parse.quote(linkname),
                 html.escape(displayname),
             ))
-            customwrite("<div class=\"file-meta\">%s" % size_display)
+            customwrite("<div class=\"file-meta\">%s%s" % (size_display, updated_display))
             customwrite("<a class=\"delete\" href=\"%s\">Delete</a>" % (
                 "?deletefile=" + html.escape(displayname),
             ))
