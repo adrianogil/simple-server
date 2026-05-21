@@ -718,7 +718,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("<div class=\"actions\">")
         customwrite("<a class=\"btn secondary\" href=\"%s\">Sort by name</a>\n" % html.escape(sort_by_name_link))
         customwrite("<a class=\"btn secondary\" href=\"%s\">Sort by updated date</a>\n" % html.escape(sort_by_updated_link))
-        customwrite("<form method=\"get\">")
+        customwrite("<form method=\"get\" action=\"%s\">" % html.escape(parsed_url.path))
         customwrite("<input type=\"hidden\" name=\"sort\" value=\"%s\">" % html.escape(sort_mode))
         customwrite("<label for=\"orderSelect\"><small>Order:</small></label>")
         customwrite("<select id=\"orderSelect\" name=\"order\" onchange=\"this.form.submit()\">")
