@@ -38,6 +38,7 @@ class LocalServer:
             os.chdir(self.directory)
             QuietRequestHandler.server_password = self.password
             QuietRequestHandler.session_store.clear()
+            QuietRequestHandler.share_store.clear()
 
             self.server = simpleserver.ThreadingSimpleServer(
                 ("127.0.0.1", 0),
@@ -54,6 +55,7 @@ class LocalServer:
             if hasattr(self, "server"):
                 self.server.server_close()
             QuietRequestHandler.session_store.clear()
+            QuietRequestHandler.share_store.clear()
             QuietRequestHandler.server_password = self.original_password
             os.chdir(self.original_cwd)
             raise
@@ -63,6 +65,7 @@ class LocalServer:
         self.server.server_close()
         self.thread.join(timeout=5)
         QuietRequestHandler.session_store.clear()
+        QuietRequestHandler.share_store.clear()
         QuietRequestHandler.server_password = self.original_password
         os.chdir(self.original_cwd)
         if self.thread.is_alive():
@@ -98,7 +101,36 @@ def multipart_upload(filename, content):
     return body, headers
 
 
+def create_share(server_address, path, expires_in=3600, cookie=None):
+    body = json.dumps({"path": path, "expires_in": expires_in}).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Content-Length": str(len(body)),
+    }
+    if cookie:
+        headers["Cookie"] = cookie
+    return request(
+        server_address,
+        "POST",
+        "/__share__",
+        body=body,
+        headers=headers,
+    )
+
+
 class HttpResponseSmokeTests(unittest.TestCase):
+    def test_share_tokens_are_redacted_from_access_logs(self):
+        handler = object.__new__(simpleserver.SimpleHTTPRequestHandler)
+        handler.requestline = "GET /__share__/secret-token/child.txt HTTP/1.1"
+        messages = []
+        handler.log_message = lambda message, *args: messages.append(message % args)
+
+        handler.log_request(200, 12)
+
+        self.assertEqual(len(messages), 1)
+        self.assertNotIn("secret-token", messages[0])
+        self.assertIn("/__share__/<redacted>/child.txt", messages[0])
+
     def test_incomplete_upload_is_rejected_before_writing_a_file(self):
         body, headers = multipart_upload(
             "cancelled.txt",
@@ -281,6 +313,122 @@ class HttpResponseSmokeTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(body, content)
 
+    def test_expiring_file_share_is_scoped_and_does_not_require_password(self):
+        password = "main-password-must-stay-secret"
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "shared.txt").write_bytes(b"shared content")
+            Path(directory, "private.txt").write_bytes(b"private content")
+
+            with LocalServer(directory, password=password) as address:
+                status, headers, body = create_share(address, "/shared.txt")
+                self.assertEqual(status, 401)
+                self.assertEqual(headers.get_content_type(), "application/json")
+                self.assertEqual(json.loads(body)["message"], "Authentication required.")
+
+                login_body = ("password=%s&next=%%2F" % password).encode("utf-8")
+                status, headers, body = request(
+                    address,
+                    "POST",
+                    "/__login__",
+                    body=login_body,
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Content-Length": str(len(login_body)),
+                    },
+                )
+                self.assertEqual(status, 303)
+                session_cookie = headers["Set-Cookie"].split(";", 1)[0]
+
+                status, headers, body = create_share(
+                    address,
+                    "/shared.txt",
+                    expires_in=900,
+                    cookie=session_cookie,
+                )
+                payload = json.loads(body)
+                self.assertEqual(status, 201)
+                self.assertEqual(headers["Cache-Control"], "no-store")
+                self.assertEqual(payload["expires_in"], 900)
+                self.assertNotIn(password.encode("utf-8"), body)
+                share_url = payload["url"]
+                token = share_url.split('/')[2]
+
+                status, headers, body = request(address, "GET", share_url)
+                self.assertEqual(status, 200)
+                self.assertEqual(body, b"shared content")
+                self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    share_url,
+                    headers={"Range": "bytes=0-5"},
+                )
+                self.assertEqual(status, 206)
+                self.assertEqual(body, b"shared")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    share_url + "/private.txt",
+                )
+                self.assertEqual(status, 404)
+
+                status, headers, body = request(address, "POST", share_url)
+                self.assertEqual(status, 405)
+
+                QuietRequestHandler.share_store[token]["expires_at"] = 0
+                status, headers, body = request(address, "GET", share_url)
+                self.assertEqual(status, 410)
+
+    def test_directory_share_is_read_only_and_cannot_escape_its_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            shared_directory = Path(directory, "shared-folder")
+            shared_directory.mkdir()
+            Path(shared_directory, "child.txt").write_bytes(b"child content")
+            Path(directory, "private.txt").write_bytes(b"private content")
+
+            with LocalServer(directory) as address:
+                status, headers, body = create_share(
+                    address,
+                    "/shared-folder/",
+                    expires_in=60,
+                )
+                self.assertEqual(status, 400)
+
+                status, headers, body = create_share(
+                    address,
+                    "/shared-folder/",
+                    expires_in=86400,
+                )
+                self.assertEqual(status, 201)
+                share_url = json.loads(body)["url"]
+                self.assertTrue(share_url.endswith('/'))
+
+                status, headers, body = request(address, "GET", share_url)
+                self.assertEqual(status, 200)
+                self.assertIn(b"Shared directory", body)
+                self.assertIn(b"child.txt", body)
+                self.assertNotIn(b'id="upload-dropzone"', body)
+                self.assertNotIn(b'class="delete"', body)
+                self.assertNotIn(b'class="share-button"', body)
+                self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    share_url + "child.txt",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body, b"child content")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    share_url + "%2E%2E/private.txt",
+                )
+                self.assertEqual(status, 404)
+
     def test_directory_listing_and_missing_file_responses(self):
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "visible file.txt").write_text(
@@ -300,6 +448,9 @@ class HttpResponseSmokeTests(unittest.TestCase):
                 self.assertIn(b"xhr.upload.addEventListener('progress'", body)
                 self.assertIn(b"cancel.addEventListener('click'", body)
                 self.assertIn(b"dropzone.addEventListener('drop'", body)
+                self.assertIn(b'id="share-expiry"', body)
+                self.assertIn(b'class="share-button"', body)
+                self.assertIn(b"fetch('/__share__'", body)
 
                 status, headers, body = request(address, "GET", "/missing.txt")
                 self.assertEqual(status, 404)

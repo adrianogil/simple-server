@@ -10,6 +10,7 @@ Simple HTTP server in Python with a modern, browser-friendly UI.
 - Create folders and delete files from the UI.
 - Download a directory as a zip archive.
 - Password-protected sessions with a login/logout flow.
+- Expiring, read-only share links scoped to one file or directory.
 - Session cookies expire after 30 minutes by default.
 - List running server instances via `list` (human readable) or `list --porcelain` (script-friendly).
 - Threaded request handling for concurrent clients.
@@ -72,5 +73,6 @@ curl http://127.0.0.1:8000/healthz
 ## Notes
 - When password protection is enabled, clients must log in through the `/__login__` page and can log out via `/__logout__`.
 - The `/healthz` endpoint remains available without authentication for health probes.
+- Share links can expire after 15 minutes, 1 hour, or 24 hours and are invalidated when the server stops.
 - The server writes upload files into the current working directory (or the directory you pass on the command line).
 - Upload, create, and delete operations accept single names only and reject targets that resolve outside the served directory.

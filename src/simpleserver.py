@@ -138,7 +138,29 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     session_cookie_name = "SimpleServerSession"
     session_store = {}
     session_lock = threading.Lock()
+    share_store = {}
+    share_lock = threading.Lock()
+    share_expiry_options = (900, 3600, 86400)
+    max_share_links = 1000
     copy_buffer_size = 64 * 1024
+
+    def log_request(self, code='-', size='-'):
+        requestline = re.sub(
+            r"(/__share__/)[^/?\s]+",
+            r"\1<redacted>",
+            self.requestline,
+        )
+        self.log_message('"%s" %s %s', requestline, str(code), str(size))
+
+    def send_json_response(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
+        self.wfile.write(body)
 
     def send_health_response(self, include_body=True):
         payload = {
@@ -199,6 +221,161 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_header("ETag", etag)
         self.send_header("Last-Modified", self.date_time_string(file_stat.st_mtime))
         self.send_header("Cache-Control", "no-cache")
+        self.send_header("Referrer-Policy", "no-referrer")
+
+    def cleanup_expired_shares(self):
+        now = time.time()
+        with self.share_lock:
+            expired = [
+                token for token, entry in self.share_store.items()
+                if entry["expires_at"] <= now
+            ]
+            for token in expired:
+                self.share_store.pop(token, None)
+
+    def handle_create_share(self):
+        if self.headers.get_content_type() != "application/json":
+            self.send_json_response(415, {"status": "error", "message": "Share requests must use JSON."})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self.send_json_response(400, {"status": "error", "message": "Invalid request length."})
+            return
+        if length <= 0 or length > 4096:
+            self.send_json_response(400, {"status": "error", "message": "Invalid share request."})
+            return
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json_response(400, {"status": "error", "message": "Invalid JSON request."})
+            return
+
+        scope = payload.get("path")
+        expires_in = payload.get("expires_in")
+        parsed_scope = urllib.parse.urlsplit(scope) if isinstance(scope, str) else None
+        if (
+            parsed_scope is None
+            or parsed_scope.scheme
+            or parsed_scope.netloc
+            or not parsed_scope.path.startswith('/')
+            or type(expires_in) is not int
+            or expires_in not in self.share_expiry_options
+        ):
+            self.send_json_response(400, {"status": "error", "message": "Invalid share scope or expiry."})
+            return
+
+        served_root = os.path.realpath(os.getcwd())
+        target = os.path.realpath(self.translate_path(parsed_scope.path))
+        try:
+            contained = os.path.commonpath((served_root, target)) == served_root
+        except ValueError:
+            contained = False
+        if not contained or not os.path.exists(target):
+            self.send_json_response(404, {"status": "error", "message": "Share target not found."})
+            return
+
+        token = secrets.token_urlsafe(24)
+        expires_at = time.time() + expires_in
+        self.cleanup_expired_shares()
+        with self.share_lock:
+            if len(self.share_store) >= self.max_share_links:
+                oldest = min(
+                    self.share_store,
+                    key=lambda item: self.share_store[item]["expires_at"],
+                )
+                self.share_store.pop(oldest, None)
+            self.share_store[token] = {
+                "path": target,
+                "served_root": served_root,
+                "expires_at": expires_at,
+            }
+
+        share_url = "/__share__/%s" % token
+        if os.path.isdir(target):
+            share_url += "/"
+        self.send_json_response(201, {
+            "status": "ok",
+            "url": share_url,
+            "expires_at": expires_at,
+            "expires_in": expires_in,
+        })
+
+    def get_share_entry(self, token):
+        now = time.time()
+        with self.share_lock:
+            entry = self.share_store.get(token)
+            if entry is None:
+                return None, False
+            if entry["expires_at"] <= now:
+                self.share_store.pop(token, None)
+                return None, True
+            return dict(entry), False
+
+    def resolve_shared_target(self, entry, suffix):
+        shared_root = os.path.realpath(entry["path"])
+        served_root = entry["served_root"]
+        try:
+            if os.path.commonpath((served_root, shared_root)) != served_root:
+                raise ValueError("Share target escaped the served directory")
+        except ValueError:
+            raise ValueError("Share target escaped the served directory")
+
+        if not os.path.isdir(shared_root):
+            if suffix.strip('/'):
+                raise ValueError("File shares do not have child paths")
+            return shared_root
+
+        target = shared_root
+        for part in suffix.split('/'):
+            if part:
+                target = resolve_contained_child(shared_root, part, target)
+        return target
+
+    def send_shared_head(self):
+        request_path = urllib.parse.urlsplit(self.path).path
+        remainder = request_path[len("/__share__/"):]
+        token, separator, suffix = remainder.partition('/')
+        entry, expired = self.get_share_entry(token)
+        if entry is None:
+            self.send_error(410 if expired else 404, "Share link expired" if expired else "Share link not found")
+            return None
+        try:
+            target = self.resolve_shared_target(entry, suffix if separator else "")
+        except ValueError:
+            self.send_error(404, "Shared path not found")
+            return None
+        if not os.path.exists(target):
+            self.send_error(404, "Shared path not found")
+            return None
+
+        if os.path.isdir(target):
+            if not request_path.endswith('/'):
+                self.send_response(301)
+                self.send_header("Location", request_path + "/")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.end_headers()
+                return None
+            for index_name in "index.html", "index.htm":
+                index_path = os.path.join(target, index_name)
+                if os.path.exists(index_path):
+                    return self.send_file_head(index_path)
+            listing_root = "/__share__/%s/" % token
+            display_path = "/" + urllib.parse.unquote(suffix)
+            return self.list_directory(
+                target,
+                read_only=True,
+                listing_root=listing_root,
+                display_path=display_path,
+            )
+        return self.send_file_head(target)
+
+    def handle_shared_request(self, include_body):
+        f = self.send_shared_head()
+        if f:
+            if include_body:
+                self.copyfile(f, self.wfile)
+            f.close()
 
     def cleanup_expired_sessions(self):
         now = time.time()
@@ -347,8 +524,12 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """Serve a GET request."""
-        if urllib.parse.urlsplit(self.path).path == "/healthz":
+        request_path = urllib.parse.urlsplit(self.path).path
+        if request_path == "/healthz":
             self.send_health_response()
+            return
+        if request_path.startswith("/__share__/"):
+            self.handle_shared_request(include_body=True)
             return
         if self.path.startswith("/__logout__"):
             self.handle_logout()
@@ -372,8 +553,12 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         """Serve a HEAD request."""
-        if urllib.parse.urlsplit(self.path).path == "/healthz":
+        request_path = urllib.parse.urlsplit(self.path).path
+        if request_path == "/healthz":
             self.send_health_response(include_body=False)
+            return
+        if request_path.startswith("/__share__/"):
+            self.handle_shared_request(include_body=False)
             return
         if self.server_password and not self.is_authenticated():
             self.send_response(401)
@@ -385,17 +570,27 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         """Serve a POST request."""
-        if self.path.startswith("/__login__"):
+        request_path = urllib.parse.urlsplit(self.path).path
+        if request_path == "/__login__":
             if not self.server_password:
                 self.send_error(404, "Login not configured")
                 return
             self.handle_login()
+            return
+        if request_path.startswith("/__share__/"):
+            self.send_error(405, "Shared links are read-only")
+            return
+        if request_path == "/__share__" and self.server_password and not self.is_authenticated():
+            self.send_json_response(401, {"status": "error", "message": "Authentication required."})
             return
         if self.server_password and not self.is_authenticated():
             f = self.render_login_page(next_path=self.path)
             if f:
                 self.copyfile(f, self.wfile)
                 f.close()
+            return
+        if request_path == "/__share__":
+            self.handle_create_share()
             return
         r, info = self.deal_post_data()
         print(r, info, "by: ", self.client_address)
@@ -753,6 +948,10 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                     break
             else:
                 return self.list_directory(path)
+        return self.send_file_head(path)
+
+    def send_file_head(self, path):
+        self._range_remaining = None
         ctype = self.guess_type(path)
         try:
             # Always read in binary mode. Opening files in text mode may cause
@@ -804,7 +1003,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         return f
 
-    def list_directory(self, path):
+    def list_directory(self, path, read_only=False, listing_root="/", display_path=None):
         """Helper to produce a directory listing (absent index.html).
 
         Return value is either a file object, or None (indicating an
@@ -819,7 +1018,9 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             return None
         list.sort(key=lambda a: a.lower())
         f = BytesIO()
-        displaypath = html.escape(urllib.parse.unquote(self.path))
+        displaypath = html.escape(
+            display_path if display_path is not None else urllib.parse.unquote(self.path)
+        )
 
         js_action_create_folder = "window.open('%s' + document.getElementById('folderName').value,'_self')" % (
                 self.path.strip() + "?createfolder=",
@@ -862,7 +1063,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite(".actions form{display:flex;align-items:center;gap:8px;"
                     "background:var(--surface);padding:10px 12px;border-radius:12px;"
                     "border:1px solid var(--border);}\n")
-        customwrite("input[type='text'],input[type='file']{font-size:14px;}\n")
+        customwrite("input[type='text'],input[type='file'],select{font-size:14px;}\n")
         customwrite(".btn{background:var(--primary);color:#fff;border:none;border-radius:8px;"
                     "padding:8px 12px;font-size:14px;cursor:pointer;}\n")
         customwrite(".btn.secondary{background:var(--secondary);}\n")
@@ -888,6 +1089,19 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite(".cancel-upload{grid-column:2;grid-row:1/4;align-self:center;background:transparent;"
                     "color:var(--danger);border:1px solid var(--danger);border-radius:8px;padding:6px 9px;cursor:pointer;}\n")
         customwrite(".cancel-upload:disabled{cursor:default;opacity:.55;}\n")
+        customwrite(".share-settings{display:flex;align-items:center;gap:8px;background:var(--surface);"
+                    "padding:10px 12px;border:1px solid var(--border);border-radius:12px;}\n")
+        customwrite(".share-settings select,.share-link{background:var(--card);color:var(--text);"
+                    "border:1px solid var(--border);border-radius:7px;padding:7px;}\n")
+        customwrite(".share-button{background:transparent;color:var(--link);border:1px solid var(--link);"
+                    "border-radius:8px;padding:4px 8px;font-size:12px;cursor:pointer;}\n")
+        customwrite(".share-button:disabled{cursor:wait;opacity:.6;}\n")
+        customwrite(".share-result{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;"
+                    "margin-bottom:18px;padding:12px;background:var(--surface);border:1px solid var(--border);"
+                    "border-radius:12px;}\n")
+        customwrite(".share-result[hidden]{display:none;}\n")
+        customwrite(".share-link{min-width:0;}\n")
+        customwrite(".share-status{grid-column:1/-1;color:var(--muted);font-size:12px;}\n")
         customwrite(".list{list-style:none;margin:0;padding:0;}\n")
         customwrite(".list li{display:flex;align-items:center;justify-content:space-between;"
                     "padding:10px 12px;border-bottom:1px solid var(--border);}\n")
@@ -903,36 +1117,51 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("<div class=\"container\">\n")
         customwrite("<div class=\"card\">\n")
         customwrite("<div class=\"header\">\n")
-        customwrite("<h2>Directory listing</h2>\n")
+        customwrite("<h2>%s</h2>\n" % ("Shared directory" if read_only else "Directory listing"))
         customwrite("<div class=\"path\">%s</div>\n" % displaypath)
         customwrite("</div>\n")
-        customwrite("<div class=\"upload-panel\">\n")
-        customwrite("<form id=\"upload-form\" class=\"upload-form\" ENCTYPE=\"multipart/form-data\" method=\"post\">\n")
-        customwrite("<label id=\"upload-dropzone\" class=\"upload-dropzone\" for=\"upload-input\" tabindex=\"0\">\n")
-        customwrite("<strong>Drop files here or choose files</strong>\n")
-        customwrite("<span class=\"upload-hint\">Files upload individually so each transfer can be tracked or cancelled.</span>\n")
-        customwrite("<input id=\"upload-input\" name=\"file\" type=\"file\" multiple>\n")
-        customwrite("</label>\n")
-        customwrite("<div class=\"upload-controls\">\n")
-        customwrite("<button id=\"upload-submit\" class=\"btn\" type=\"submit\">Upload selected</button>\n")
-        customwrite("<button id=\"refresh-list\" class=\"btn secondary\" type=\"button\" hidden>Refresh listing</button>\n")
-        customwrite("</div>\n")
-        customwrite("</form>\n")
-        customwrite("<ul id=\"upload-queue\" class=\"upload-queue\" aria-live=\"polite\"></ul>\n")
-        customwrite("</div>\n")
+        if not read_only:
+            customwrite("<div class=\"upload-panel\">\n")
+            customwrite("<form id=\"upload-form\" class=\"upload-form\" ENCTYPE=\"multipart/form-data\" method=\"post\">\n")
+            customwrite("<label id=\"upload-dropzone\" class=\"upload-dropzone\" for=\"upload-input\" tabindex=\"0\">\n")
+            customwrite("<strong>Drop files here or choose files</strong>\n")
+            customwrite("<span class=\"upload-hint\">Files upload individually so each transfer can be tracked or cancelled.</span>\n")
+            customwrite("<input id=\"upload-input\" name=\"file\" type=\"file\" multiple>\n")
+            customwrite("</label>\n")
+            customwrite("<div class=\"upload-controls\">\n")
+            customwrite("<button id=\"upload-submit\" class=\"btn\" type=\"submit\">Upload selected</button>\n")
+            customwrite("<button id=\"refresh-list\" class=\"btn secondary\" type=\"button\" hidden>Refresh listing</button>\n")
+            customwrite("</div>\n")
+            customwrite("</form>\n")
+            customwrite("<ul id=\"upload-queue\" class=\"upload-queue\" aria-live=\"polite\"></ul>\n")
+            customwrite("</div>\n")
         customwrite("<div class=\"actions\">\n")
-        customwrite("<form ENCTYPE=\"multipart/form-data\">")
-        customwrite("<label for=\"folderName\"><small>Create folder:</small></label>")
-        customwrite("<input type=\"text\" id=\"folderName\" placeholder=\"New folder\">")
-        customwrite("<button class=\"btn secondary\" type=\"button\" onclick=\"" + js_action_create_folder + "\">Create</button>")
-        customwrite("</form>\n")
-        customwrite("<a class=\"btn\" href='%s'>Download zip</a>\n" % (self.path + "?download",))
+        if not read_only:
+            customwrite("<form ENCTYPE=\"multipart/form-data\">")
+            customwrite("<label for=\"folderName\"><small>Create folder:</small></label>")
+            customwrite("<input type=\"text\" id=\"folderName\" placeholder=\"New folder\">")
+            customwrite("<button class=\"btn secondary\" type=\"button\" onclick=\"" + js_action_create_folder + "\">Create</button>")
+            customwrite("</form>\n")
+            customwrite("<a class=\"btn\" href='%s'>Download zip</a>\n" % (self.path + "?download",))
+            customwrite("<div class=\"share-settings\">")
+            customwrite("<label for=\"share-expiry\"><small>Share expires:</small></label>")
+            customwrite("<select id=\"share-expiry\">")
+            customwrite("<option value=\"900\">15 minutes</option>")
+            customwrite("<option value=\"3600\" selected>1 hour</option>")
+            customwrite("<option value=\"86400\">24 hours</option>")
+            customwrite("</select></div>\n")
         customwrite("<button class=\"btn secondary\" type=\"button\" id=\"theme-toggle\">Light mode</button>\n")
-        if self.server_password:
+        if self.server_password and not read_only:
             customwrite("<a class=\"btn secondary\" href='/__logout__'>Logout</a>\n")
         customwrite("</div>\n")
+        if not read_only:
+            customwrite("<div id=\"share-result\" class=\"share-result\" hidden>\n")
+            customwrite("<input id=\"share-link\" class=\"share-link\" type=\"text\" readonly aria-label=\"Generated share link\">\n")
+            customwrite("<button id=\"copy-share\" class=\"btn secondary\" type=\"button\">Copy</button>\n")
+            customwrite("<span id=\"share-status\" class=\"share-status\" aria-live=\"polite\"></span>\n")
+            customwrite("</div>\n")
         customwrite("<ul class=\"list\">\n")
-        if self.path != "/":
+        if self.path != listing_root:
             customwrite('<li><a href="%s">..</a>\n' % (urllib.parse.quote(self.path + ".."),))
         for name in list:
             fullname = os.path.join(path, name)
@@ -959,9 +1188,17 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                 html.escape(displayname),
             ))
             customwrite("<div class=\"file-meta\">%s" % size_display)
-            customwrite("<a class=\"delete\" href=\"%s\">Delete</a>" % (
-                "?deletefile=" + html.escape(displayname),
-            ))
+            if not read_only:
+                scope_path = urllib.parse.quote(
+                    urllib.parse.unquote(self.path) + linkname,
+                    safe='/',
+                )
+                customwrite("<button class=\"share-button\" type=\"button\" data-scope=\"%s\">Share</button>" % (
+                    html.escape(scope_path, quote=True),
+                ))
+                customwrite("<a class=\"delete\" href=\"%s\">Delete</a>" % (
+                    "?deletefile=" + html.escape(displayname),
+                ))
             customwrite("</div></li>\n")
         customwrite("</ul>\n")
         customwrite("<div class=\"footer\">Powered By: Gil, check new version ")
@@ -992,6 +1229,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("var dropzone=document.getElementById('upload-dropzone');\n")
         customwrite("var queue=document.getElementById('upload-queue');\n")
         customwrite("var refresh=document.getElementById('refresh-list');\n")
+        customwrite("if(uploadForm){\n")
         customwrite("function uploadFile(file){\n")
         customwrite("var item=document.createElement('li');item.className='upload-item';\n")
         customwrite("var name=document.createElement('span');name.className='upload-name';name.textContent=file.name;\n")
@@ -1033,6 +1271,31 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("dropzone.addEventListener('keydown',function(event){if(event.key==='Enter'||event.key===' '){"
                     "event.preventDefault();uploadInput.click();}});\n")
         customwrite("refresh.addEventListener('click',function(){window.location.reload();});\n")
+        customwrite("}\n")
+        customwrite("var shareResult=document.getElementById('share-result');\n")
+        customwrite("if(shareResult){\n")
+        customwrite("var shareExpiry=document.getElementById('share-expiry');\n")
+        customwrite("var shareLink=document.getElementById('share-link');\n")
+        customwrite("var shareStatus=document.getElementById('share-status');\n")
+        customwrite("var copyShare=document.getElementById('copy-share');\n")
+        customwrite("Array.prototype.forEach.call(document.querySelectorAll('.share-button'),function(control){\n")
+        customwrite("control.addEventListener('click',function(){control.disabled=true;shareStatus.textContent='Creating link…';"
+                    "fetch('/__share__',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},"
+                    "body:JSON.stringify({path:control.dataset.scope,expires_in:Number(shareExpiry.value)})})"
+                    ".then(function(response){return response.json().then(function(data){if(!response.ok){"
+                    "throw new Error(data.message||'Could not create link');}return data;});})"
+                    ".then(function(data){shareLink.value=window.location.origin+data.url;shareResult.hidden=false;"
+                    "shareStatus.textContent='Expires '+new Date(data.expires_at*1000).toLocaleString();shareLink.select();})"
+                    ".catch(function(error){shareResult.hidden=false;shareLink.value='';shareStatus.textContent=error.message;})"
+                    ".then(function(){control.disabled=false;});});\n")
+        customwrite("});\n")
+        customwrite("function fallbackCopy(){shareLink.select();document.execCommand('copy');"
+                    "shareStatus.textContent='Link copied';}\n")
+        customwrite("copyShare.addEventListener('click',function(){if(!shareLink.value){return;}"
+                    "if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(shareLink.value)"
+                    ".then(function(){shareStatus.textContent='Link copied';}).catch(fallbackCopy);return;}"
+                    "fallbackCopy();});\n")
+        customwrite("}\n")
         customwrite("})();\n")
         customwrite("</script>\n")
         customwrite("</body>\n</html>\n")
@@ -1042,6 +1305,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         encoding = sys.getfilesystemencoding()
         self.send_header("Content-type", "text/html; charset=%s" % encoding)
         self.send_header("Content-Length", str(length))
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         return f
 
