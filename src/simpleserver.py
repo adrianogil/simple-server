@@ -13,6 +13,7 @@ __all__ = ["SimpleHTTPRequestHandler"]
 __author__ = "gil"
 __home_page__ = "http://adrianogil.github.io"
 
+import ntpath
 import os
 import posixpath
 import urllib
@@ -41,6 +42,45 @@ def sizeof_fmt(num, suffix='B'):
             return "%3.1f%s%s" % (num, unit, suffix)
         num /= 1024.0
     return "%.1f%s%s" % (num, 'Yi', suffix)
+
+
+def resolve_contained_child(root, child_name, parent=None):
+    """Resolve a child under root without following a parent or child outside it."""
+    if not isinstance(child_name, str):
+        raise ValueError("Invalid file or folder name")
+
+    child_name = urllib.parse.unquote(child_name)
+    drive = os.path.splitdrive(child_name)[0] or ntpath.splitdrive(child_name)[0]
+    separators = {separator for separator in (os.sep, os.altsep, '/', '\\') if separator}
+    if (
+        not child_name
+        or child_name in (os.curdir, os.pardir)
+        or drive
+        or '\x00' in child_name
+        or os.path.isabs(child_name)
+        or any(separator in child_name for separator in separators)
+    ):
+        raise ValueError("Invalid file or folder name")
+
+    root = os.path.realpath(root)
+    parent = os.path.realpath(parent if parent is not None else root)
+    try:
+        parent_is_contained = os.path.commonpath((root, parent)) == root
+    except ValueError:
+        parent_is_contained = False
+    if not parent_is_contained:
+        raise ValueError("File or folder must remain within the served directory")
+
+    destination = os.path.join(parent, child_name)
+    resolved_destination = os.path.realpath(destination)
+    try:
+        contained = os.path.commonpath((root, resolved_destination)) == root
+    except ValueError:
+        contained = False
+    if not contained:
+        raise ValueError("File or folder must remain within the served directory")
+
+    return destination
 
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -349,7 +389,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("</body>\n</html>\n")
         length = f.tell()
         f.seek(0)
-        self.send_response(200)
+        self.send_response(200 if r else 400)
         self.send_header("Content-type", "text/html")
         self.send_header("Content-Length", str(length))
         self.end_headers()
@@ -362,7 +402,12 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
         result = True
 
-        new_folder = os.path.join(path, folder_name)
+        try:
+            new_folder = resolve_contained_child(os.getcwd(), folder_name, path)
+        except ValueError as error:
+            self.send_error(400, str(error))
+            return None
+        folder_name = os.path.basename(new_folder)
 
         if os.path.exists(new_folder):
             result = False
@@ -408,7 +453,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("</head>\n")
         customwrite("<body>\n")
         customwrite("<div class=\"card\">\n")
-        customwrite("<h2 class=\"title\">Folder \"%s\"</h2>\n" % folder_name)
+        customwrite("<h2 class=\"title\">Folder \"%s\"</h2>\n" % html.escape(folder_name))
         if result:
             customwrite("<div class=\"status success\">Created successfully.</div>\n")
         else:
@@ -453,7 +498,12 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
         result = True
 
-        file_path = os.path.join(path, file_name)
+        try:
+            file_path = resolve_contained_child(os.getcwd(), file_name, path)
+        except ValueError as error:
+            self.send_error(400, str(error))
+            return None
+        file_name = os.path.basename(file_path)
 
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -497,7 +547,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("</head>\n")
         customwrite("<body>\n")
         customwrite("<div class=\"card\">\n")
-        customwrite("<h2 class=\"title\">Removed \"%s\"</h2>\n" % file_name)
+        customwrite("<h2 class=\"title\">Removed \"%s\"</h2>\n" % html.escape(file_name))
         if result:
             customwrite("<div class=\"status success\">File deleted successfully.</div>\n")
         else:
@@ -545,14 +595,18 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             form = cgi.FieldStorage( fp=self.rfile, headers=self.headers, environ={'REQUEST_METHOD':'POST', 'CONTENT_TYPE':self.headers['Content-Type'], })
             print (type(form))
             try:
-                if isinstance(form["file"], list):
-                    for record in form["file"]:
-                        open("./%s"%record.filename, "wb").write(record.file.read())
-                else:
-                    print(form["file"].filename)
-                    open("./%s"%form["file"].filename, "wb").write(form["file"].file.read())
+                records = form["file"] if isinstance(form["file"], list) else [form["file"]]
+                uploads = [
+                    (record, resolve_contained_child(os.getcwd(), record.filename))
+                    for record in records
+                ]
+                for record, destination in uploads:
+                    with open(destination, "wb") as uploaded_file:
+                        uploaded_file.write(record.file.read())
+            except ValueError:
+                return (False, "Upload rejected: invalid filename or destination.")
             except IOError:
-                    return (False, "Can't create file to write, do you have permission to write?")
+                return (False, "Can't create file to write, do you have permission to write?")
         return (True, "Files uploaded")
 
     def send_head(self):

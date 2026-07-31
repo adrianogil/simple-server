@@ -72,3 +72,4 @@ curl http://127.0.0.1:8000/healthz
 - When password protection is enabled, clients must log in through the `/__login__` page and can log out via `/__logout__`.
 - The `/healthz` endpoint remains available without authentication for health probes.
 - The server writes upload files into the current working directory (or the directory you pass on the command line).
+- Upload, create, and delete operations accept single names only and reject targets that resolve outside the served directory.

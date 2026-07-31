@@ -79,6 +79,24 @@ def request(server_address, method, path, body=None, headers=None):
         connection.close()
 
 
+def multipart_upload(filename, content):
+    boundary = "simple-server-test-boundary"
+    body = (
+        "--%s\r\n"
+        "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+        "Content-Type: application/octet-stream\r\n"
+        "\r\n" % (boundary, filename)
+    ).encode("utf-8")
+    body += content
+    body += ("\r\n--%s--\r\n" % boundary).encode("ascii")
+    headers = {
+        "Content-Type": "multipart/form-data; boundary=%s" % boundary,
+        "Content-Length": str(len(body)),
+        "Referer": "/",
+    }
+    return body, headers
+
+
 class HttpResponseSmokeTests(unittest.TestCase):
     def test_health_endpoint_returns_json_for_get_and_head(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -139,6 +157,128 @@ class HttpResponseSmokeTests(unittest.TestCase):
                 self.assertEqual(status, 404)
                 self.assertEqual(headers.get_content_type(), "text/html")
                 self.assertIn(b"File not found", body)
+
+    def test_mutations_cannot_escape_served_directory(self):
+        with tempfile.TemporaryDirectory() as parent:
+            served = Path(parent, "served")
+            served.mkdir()
+            outside = Path(parent, "outside.txt")
+            outside.write_bytes(b"must remain unchanged")
+            outside_directory = Path(parent, "outside-directory")
+            outside_directory.mkdir()
+            outside_via_symlink = outside_directory / "outside-via-symlink.txt"
+            outside_via_symlink.write_bytes(b"also unchanged")
+            escape_link = served / "escape"
+            upload_escape_link = served / "upload-escape.txt"
+            symlinks_available = True
+            try:
+                escape_link.symlink_to(outside_directory, target_is_directory=True)
+                upload_escape_link.symlink_to(outside)
+            except OSError:
+                symlinks_available = False
+
+            with LocalServer(str(served)) as address:
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/?deletefile=..%2Foutside.txt",
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(outside.read_bytes(), b"must remain unchanged")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/?createfolder=..%2Fescaped-folder",
+                )
+                self.assertEqual(status, 400)
+                self.assertFalse(Path(parent, "escaped-folder").exists())
+
+                if symlinks_available:
+                    status, headers, body = request(
+                        address,
+                        "GET",
+                        "/escape/?deletefile=outside-via-symlink.txt",
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(outside_via_symlink.read_bytes(), b"also unchanged")
+
+                    status, headers, body = request(
+                        address,
+                        "GET",
+                        "/escape/?createfolder=escaped-via-symlink",
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertFalse((outside_directory / "escaped-via-symlink").exists())
+
+                    upload_body, upload_headers = multipart_upload(
+                        "upload-escape.txt",
+                        b"must not follow the symlink",
+                    )
+                    status, headers, body = request(
+                        address,
+                        "POST",
+                        "/",
+                        body=upload_body,
+                        headers=upload_headers,
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(outside.read_bytes(), b"must remain unchanged")
+
+                upload_body, upload_headers = multipart_upload(
+                    "../escaped-upload.txt",
+                    b"must not be written",
+                )
+                status, headers, body = request(
+                    address,
+                    "POST",
+                    "/",
+                    body=upload_body,
+                    headers=upload_headers,
+                )
+                self.assertEqual(status, 400)
+                self.assertIn(b"Upload rejected", body)
+                self.assertFalse(Path(parent, "escaped-upload.txt").exists())
+
+    def test_mutations_accept_plain_names_within_served_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            served = Path(directory)
+            delete_target = served / "delete-me.txt"
+            delete_target.write_text("delete me", encoding="utf-8")
+
+            with LocalServer(directory) as address:
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/?deletefile=delete-me.txt",
+                )
+                self.assertEqual(status, 200)
+                self.assertFalse(delete_target.exists())
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/?createfolder=new-folder",
+                )
+                self.assertEqual(status, 200)
+                self.assertTrue(Path(directory, "new-folder").is_dir())
+
+                upload_body, upload_headers = multipart_upload(
+                    "uploaded.txt",
+                    b"uploaded safely",
+                )
+                status, headers, body = request(
+                    address,
+                    "POST",
+                    "/",
+                    body=upload_body,
+                    headers=upload_headers,
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    Path(directory, "uploaded.txt").read_bytes(),
+                    b"uploaded safely",
+                )
 
     def test_password_login_allows_access_to_static_file(self):
         content = b"protected content\n"
