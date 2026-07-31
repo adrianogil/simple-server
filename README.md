@@ -6,7 +6,7 @@ Simple HTTP server in Python with a modern, browser-friendly UI.
 
 ## Features
 - Modern directory listing UI with file sizes and quick actions.
-- Upload one or more files directly from the browser.
+- Drag and drop one or more files with per-file progress, status, and cancellation controls.
 - Create folders and delete files from the UI.
 - Download a directory as a zip archive.
 - Password-protected sessions with a login/logout flow.

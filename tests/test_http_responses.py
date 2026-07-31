@@ -1,4 +1,5 @@
 import http.client
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -98,6 +99,28 @@ def multipart_upload(filename, content):
 
 
 class HttpResponseSmokeTests(unittest.TestCase):
+    def test_incomplete_upload_is_rejected_before_writing_a_file(self):
+        body, headers = multipart_upload(
+            "cancelled.txt",
+            b"partial upload content",
+        )
+        handler = object.__new__(QuietRequestHandler)
+        handler.headers = dict(headers)
+        handler.headers["Content-Length"] = str(len(body) + 100)
+        handler.rfile = BytesIO(body)
+
+        with tempfile.TemporaryDirectory() as directory:
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(directory)
+                result, message = handler.deal_post_data()
+            finally:
+                os.chdir(original_cwd)
+
+            self.assertFalse(result)
+            self.assertEqual(message, "Upload cancelled or incomplete.")
+            self.assertFalse(Path(directory, "cancelled.txt").exists())
+
     def test_health_endpoint_returns_json_for_get_and_head(self):
         with tempfile.TemporaryDirectory() as directory:
             with LocalServer(directory, password="test-secret") as address:
@@ -152,6 +175,11 @@ class HttpResponseSmokeTests(unittest.TestCase):
                 self.assertIn("charset=", headers["Content-Type"])
                 self.assertIn(b"<h2>Directory listing</h2>", body)
                 self.assertIn(b"visible%20file.txt", body)
+                self.assertIn(b'id="upload-dropzone"', body)
+                self.assertIn(b'id="upload-input" name="file" type="file" multiple', body)
+                self.assertIn(b"xhr.upload.addEventListener('progress'", body)
+                self.assertIn(b"cancel.addEventListener('click'", body)
+                self.assertIn(b"dropzone.addEventListener('drop'", body)
 
                 status, headers, body = request(address, "GET", "/missing.txt")
                 self.assertEqual(status, 404)
@@ -229,6 +257,7 @@ class HttpResponseSmokeTests(unittest.TestCase):
                     "../escaped-upload.txt",
                     b"must not be written",
                 )
+                upload_headers["Accept"] = "application/json"
                 status, headers, body = request(
                     address,
                     "POST",
@@ -237,6 +266,8 @@ class HttpResponseSmokeTests(unittest.TestCase):
                     headers=upload_headers,
                 )
                 self.assertEqual(status, 400)
+                self.assertEqual(headers.get_content_type(), "application/json")
+                self.assertEqual(json.loads(body)["status"], "error")
                 self.assertIn(b"Upload rejected", body)
                 self.assertFalse(Path(parent, "escaped-upload.txt").exists())
 
@@ -267,6 +298,7 @@ class HttpResponseSmokeTests(unittest.TestCase):
                     "uploaded.txt",
                     b"uploaded safely",
                 )
+                upload_headers["Accept"] = "application/json"
                 status, headers, body = request(
                     address,
                     "POST",
@@ -275,6 +307,11 @@ class HttpResponseSmokeTests(unittest.TestCase):
                     headers=upload_headers,
                 )
                 self.assertEqual(status, 200)
+                self.assertEqual(headers.get_content_type(), "application/json")
+                self.assertEqual(
+                    json.loads(body),
+                    {"status": "ok", "message": "Files uploaded"},
+                )
                 self.assertEqual(
                     Path(directory, "uploaded.txt").read_bytes(),
                     b"uploaded safely",

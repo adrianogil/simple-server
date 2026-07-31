@@ -318,6 +318,17 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             return
         r, info = self.deal_post_data()
         print(r, info, "by: ", self.client_address)
+        if "application/json" in self.headers.get("Accept", ""):
+            body = json.dumps({
+                "status": "ok" if r else "error",
+                "message": info,
+            }).encode("utf-8")
+            self.send_response(200 if r else 400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         f = BytesIO()
 
         def customwrite(htmlstring):
@@ -594,6 +605,8 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         if ctype == 'multipart/form-data':
             form = cgi.FieldStorage( fp=self.rfile, headers=self.headers, environ={'REQUEST_METHOD':'POST', 'CONTENT_TYPE':self.headers['Content-Type'], })
             print (type(form))
+            if getattr(form, "bytes_read", pdict['CONTENT-LENGTH']) < pdict['CONTENT-LENGTH']:
+                return (False, "Upload cancelled or incomplete.")
             try:
                 records = form["file"] if isinstance(form["file"], list) else [form["file"]]
                 uploads = [
@@ -737,6 +750,28 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite(".btn{background:var(--primary);color:#fff;border:none;border-radius:8px;"
                     "padding:8px 12px;font-size:14px;cursor:pointer;}\n")
         customwrite(".btn.secondary{background:var(--secondary);}\n")
+        customwrite(".upload-panel{margin-bottom:18px;}\n")
+        customwrite(".upload-form{display:block;}\n")
+        customwrite(".upload-dropzone{display:flex;align-items:center;justify-content:center;"
+                    "flex-direction:column;gap:5px;min-height:110px;padding:18px;border:2px dashed var(--border);"
+                    "border-radius:12px;background:var(--surface);cursor:pointer;text-align:center;transition:.15s ease;}\n")
+        customwrite(".upload-dropzone:hover,.upload-dropzone:focus,.upload-dropzone.dragover{"
+                    "border-color:var(--primary);box-shadow:0 0 0 3px rgba(59,130,246,.18);outline:none;}\n")
+        customwrite(".upload-dropzone input{position:absolute;width:1px;height:1px;overflow:hidden;"
+                    "clip:rect(0 0 0 0);white-space:nowrap;}\n")
+        customwrite(".upload-hint{color:var(--muted);font-size:13px;}\n")
+        customwrite(".upload-controls{display:flex;gap:10px;margin-top:10px;}\n")
+        customwrite(".upload-queue{display:flex;flex-direction:column;gap:10px;list-style:none;margin:12px 0 0;padding:0;}\n")
+        customwrite(".upload-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 12px;"
+                    "padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);}\n")
+        customwrite(".upload-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}\n")
+        customwrite(".upload-progress{grid-column:1;width:100%;height:9px;accent-color:var(--primary);}\n")
+        customwrite(".upload-state{grid-column:1;color:var(--muted);font-size:12px;}\n")
+        customwrite(".upload-item.success .upload-state{color:#10b981;}\n")
+        customwrite(".upload-item.failed .upload-state,.upload-item.cancelled .upload-state{color:var(--danger);}\n")
+        customwrite(".cancel-upload{grid-column:2;grid-row:1/4;align-self:center;background:transparent;"
+                    "color:var(--danger);border:1px solid var(--danger);border-radius:8px;padding:6px 9px;cursor:pointer;}\n")
+        customwrite(".cancel-upload:disabled{cursor:default;opacity:.55;}\n")
         customwrite(".list{list-style:none;margin:0;padding:0;}\n")
         customwrite(".list li{display:flex;align-items:center;justify-content:space-between;"
                     "padding:10px 12px;border-bottom:1px solid var(--border);}\n")
@@ -755,10 +790,21 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("<h2>Directory listing</h2>\n")
         customwrite("<div class=\"path\">%s</div>\n" % displaypath)
         customwrite("</div>\n")
+        customwrite("<div class=\"upload-panel\">\n")
+        customwrite("<form id=\"upload-form\" class=\"upload-form\" ENCTYPE=\"multipart/form-data\" method=\"post\">\n")
+        customwrite("<label id=\"upload-dropzone\" class=\"upload-dropzone\" for=\"upload-input\" tabindex=\"0\">\n")
+        customwrite("<strong>Drop files here or choose files</strong>\n")
+        customwrite("<span class=\"upload-hint\">Files upload individually so each transfer can be tracked or cancelled.</span>\n")
+        customwrite("<input id=\"upload-input\" name=\"file\" type=\"file\" multiple>\n")
+        customwrite("</label>\n")
+        customwrite("<div class=\"upload-controls\">\n")
+        customwrite("<button id=\"upload-submit\" class=\"btn\" type=\"submit\">Upload selected</button>\n")
+        customwrite("<button id=\"refresh-list\" class=\"btn secondary\" type=\"button\" hidden>Refresh listing</button>\n")
+        customwrite("</div>\n")
+        customwrite("</form>\n")
+        customwrite("<ul id=\"upload-queue\" class=\"upload-queue\" aria-live=\"polite\"></ul>\n")
+        customwrite("</div>\n")
         customwrite("<div class=\"actions\">\n")
-        customwrite("<form ENCTYPE=\"multipart/form-data\" method=\"post\">")
-        customwrite("<input name=\"file\" type=\"file\"/>")
-        customwrite("<button class=\"btn\" type=\"submit\">Upload</button></form>\n")
         customwrite("<form ENCTYPE=\"multipart/form-data\">")
         customwrite("<label for=\"folderName\"><small>Create folder:</small></label>")
         customwrite("<input type=\"text\" id=\"folderName\" placeholder=\"New folder\">")
@@ -824,6 +870,53 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         customwrite("});\n")
         customwrite("}\n")
         customwrite("applyLabel();\n")
+        customwrite("var uploadForm=document.getElementById('upload-form');\n")
+        customwrite("var uploadInput=document.getElementById('upload-input');\n")
+        customwrite("var uploadSubmit=document.getElementById('upload-submit');\n")
+        customwrite("var dropzone=document.getElementById('upload-dropzone');\n")
+        customwrite("var queue=document.getElementById('upload-queue');\n")
+        customwrite("var refresh=document.getElementById('refresh-list');\n")
+        customwrite("function uploadFile(file){\n")
+        customwrite("var item=document.createElement('li');item.className='upload-item';\n")
+        customwrite("var name=document.createElement('span');name.className='upload-name';name.textContent=file.name;\n")
+        customwrite("var progress=document.createElement('progress');progress.className='upload-progress';"
+                    "progress.max=100;progress.value=0;\n")
+        customwrite("var state=document.createElement('span');state.className='upload-state';state.textContent='Starting…';\n")
+        customwrite("var cancel=document.createElement('button');cancel.type='button';cancel.className='cancel-upload';"
+                    "cancel.textContent='Cancel';\n")
+        customwrite("item.appendChild(name);item.appendChild(progress);item.appendChild(state);item.appendChild(cancel);"
+                    "queue.appendChild(item);\n")
+        customwrite("var data=new FormData();data.append('file',file,file.name);\n")
+        customwrite("var xhr=new XMLHttpRequest();xhr.open('POST',window.location.pathname,true);"
+                    "xhr.setRequestHeader('Accept','application/json');\n")
+        customwrite("xhr.upload.addEventListener('progress',function(event){if(!event.lengthComputable){return;}"
+                    "var percent=Math.round((event.loaded/event.total)*100);progress.value=percent;"
+                    "state.textContent=percent<100?percent+'%':'Processing…';});\n")
+        customwrite("xhr.addEventListener('load',function(){cancel.disabled=true;"
+                    "if(xhr.status>=200&&xhr.status<300){progress.value=100;item.classList.add('success');"
+                    "state.textContent='Complete';cancel.textContent='Done';refresh.hidden=false;return;}"
+                    "item.classList.add('failed');cancel.textContent='Failed';"
+                    "try{state.textContent=JSON.parse(xhr.responseText).message||'Upload failed';}"
+                    "catch(error){state.textContent='Upload failed ('+xhr.status+')';}});\n")
+        customwrite("xhr.addEventListener('error',function(){cancel.disabled=true;cancel.textContent='Failed';"
+                    "item.classList.add('failed');state.textContent='Network error';});\n")
+        customwrite("xhr.addEventListener('abort',function(){cancel.disabled=true;cancel.textContent='Cancelled';"
+                    "item.classList.add('cancelled');state.textContent='Cancelled';});\n")
+        customwrite("cancel.addEventListener('click',function(){xhr.abort();});xhr.send(data);\n")
+        customwrite("}\n")
+        customwrite("function uploadFiles(files){Array.prototype.forEach.call(files,uploadFile);}\n")
+        customwrite("uploadSubmit.hidden=true;\n")
+        customwrite("uploadInput.addEventListener('change',function(){uploadFiles(uploadInput.files);uploadInput.value='';});\n")
+        customwrite("uploadForm.addEventListener('submit',function(event){event.preventDefault();"
+                    "uploadFiles(uploadInput.files);uploadInput.value='';});\n")
+        customwrite("['dragenter','dragover'].forEach(function(type){dropzone.addEventListener(type,function(event){"
+                    "event.preventDefault();dropzone.classList.add('dragover');});});\n")
+        customwrite("['dragleave','drop'].forEach(function(type){dropzone.addEventListener(type,function(event){"
+                    "event.preventDefault();dropzone.classList.remove('dragover');});});\n")
+        customwrite("dropzone.addEventListener('drop',function(event){uploadFiles(event.dataTransfer.files);});\n")
+        customwrite("dropzone.addEventListener('keydown',function(event){if(event.key==='Enter'||event.key===' '){"
+                    "event.preventDefault();uploadInput.click();}});\n")
+        customwrite("refresh.addEventListener('click',function(){window.location.reload();});\n")
         customwrite("})();\n")
         customwrite("</script>\n")
         customwrite("</body>\n</html>\n")
