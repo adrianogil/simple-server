@@ -13,6 +13,7 @@ Simple HTTP server in Python with a modern, browser-friendly UI.
 - Session cookies expire after 30 minutes by default.
 - List running server instances via `list` (human readable) or `list --porcelain` (script-friendly).
 - Threaded request handling for concurrent clients.
+- HTTP byte ranges and ETag/Last-Modified cache validation for seeking and resumable downloads.
 - JSON health endpoint at `/healthz` with status, uptime, and version details.
 - Optional local-only binding with `--local`; external access remains the default.
 - Serve any path by passing a directory argument.

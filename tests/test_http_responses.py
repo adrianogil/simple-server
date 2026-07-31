@@ -154,12 +154,132 @@ class HttpResponseSmokeTests(unittest.TestCase):
                 self.assertEqual(headers.get_content_type(), "text/plain")
                 self.assertEqual(headers["Content-Length"], str(len(content)))
                 self.assertIsNotNone(headers["Last-Modified"])
+                self.assertIsNotNone(headers["ETag"])
+                self.assertEqual(headers["Accept-Ranges"], "bytes")
+                self.assertEqual(headers["Cache-Control"], "no-cache")
 
                 status, headers, body = request(address, "HEAD", "/hello.txt")
                 self.assertEqual(status, 200)
                 self.assertEqual(body, b"")
                 self.assertEqual(headers.get_content_type(), "text/plain")
                 self.assertEqual(headers["Content-Length"], str(len(content)))
+
+    def test_static_file_range_responses(self):
+        content = b"0123456789"
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "media.bin").write_bytes(content)
+
+            with LocalServer(directory) as address:
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/media.bin",
+                    headers={"Range": "bytes=2-5"},
+                )
+                self.assertEqual(status, 206)
+                self.assertEqual(body, b"2345")
+                self.assertEqual(headers["Content-Range"], "bytes 2-5/10")
+                self.assertEqual(headers["Content-Length"], "4")
+                etag = headers["ETag"]
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/media.bin",
+                    headers={"Range": "bytes=7-"},
+                )
+                self.assertEqual(status, 206)
+                self.assertEqual(body, b"789")
+                self.assertEqual(headers["Content-Range"], "bytes 7-9/10")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/media.bin",
+                    headers={"Range": "bytes=-3"},
+                )
+                self.assertEqual(status, 206)
+                self.assertEqual(body, b"789")
+
+                status, headers, body = request(
+                    address,
+                    "HEAD",
+                    "/media.bin",
+                    headers={"Range": "bytes=2-5"},
+                )
+                self.assertEqual(status, 206)
+                self.assertEqual(body, b"")
+                self.assertEqual(headers["Content-Length"], "4")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/media.bin",
+                    headers={"Range": "bytes=50-60"},
+                )
+                self.assertEqual(status, 416)
+                self.assertEqual(body, b"")
+                self.assertEqual(headers["Content-Range"], "bytes */10")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/media.bin",
+                    headers={"Range": "bytes=2-5", "If-Range": etag},
+                )
+                self.assertEqual(status, 206)
+                self.assertEqual(body, b"2345")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/media.bin",
+                    headers={"Range": "bytes=2-5", "If-Range": '"stale"'},
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body, content)
+
+    def test_static_file_cache_revalidation(self):
+        content = b"cacheable content"
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "cache.txt").write_bytes(content)
+
+            with LocalServer(directory) as address:
+                status, headers, body = request(address, "GET", "/cache.txt")
+                self.assertEqual(status, 200)
+                etag = headers["ETag"]
+                last_modified = headers["Last-Modified"]
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/cache.txt",
+                    headers={"If-None-Match": etag},
+                )
+                self.assertEqual(status, 304)
+                self.assertEqual(body, b"")
+                self.assertEqual(headers["ETag"], etag)
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/cache.txt",
+                    headers={"If-Modified-Since": last_modified},
+                )
+                self.assertEqual(status, 304)
+                self.assertEqual(body, b"")
+
+                status, headers, body = request(
+                    address,
+                    "GET",
+                    "/cache.txt",
+                    headers={
+                        "If-None-Match": '"stale"',
+                        "If-Modified-Since": last_modified,
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body, content)
 
     def test_directory_listing_and_missing_file_responses(self):
         with tempfile.TemporaryDirectory() as directory:

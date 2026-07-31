@@ -18,6 +18,8 @@ import os
 import posixpath
 import urllib
 import cgi
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 import html
 import shutil
 import mimetypes
@@ -83,6 +85,39 @@ def resolve_contained_child(root, child_name, parent=None):
     return destination
 
 
+def parse_http_date(value):
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def parse_byte_range(value, file_size):
+    unit, separator, range_spec = value.partition('=')
+    if not separator or unit.strip().lower() != 'bytes' or ',' in range_spec:
+        return None
+
+    match = re.fullmatch(r"(\d*)-(\d*)", range_spec.strip())
+    if not match or not any(match.groups()) or file_size == 0:
+        raise ValueError("Unsatisfiable byte range")
+
+    first, last = match.groups()
+    if first:
+        start = int(first)
+        end = int(last) if last else file_size - 1
+        if start >= file_size or end < start:
+            raise ValueError("Unsatisfiable byte range")
+        return start, min(end, file_size - 1)
+
+    suffix_length = int(last)
+    if suffix_length <= 0:
+        raise ValueError("Unsatisfiable byte range")
+    return max(0, file_size - suffix_length), file_size - 1
+
+
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     """Simple HTTP request handler with GET/HEAD/POST commands.
@@ -103,6 +138,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     session_cookie_name = "SimpleServerSession"
     session_store = {}
     session_lock = threading.Lock()
+    copy_buffer_size = 64 * 1024
 
     def send_health_response(self, include_body=True):
         payload = {
@@ -118,6 +154,51 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if include_body:
             self.wfile.write(body)
+
+    def make_file_etag(self, file_stat):
+        return '"%x-%x-%x"' % (
+            getattr(file_stat, 'st_ino', 0),
+            file_stat.st_mtime_ns,
+            file_stat.st_size,
+        )
+
+    def etag_matches(self, header_value, etag):
+        for candidate in header_value.split(','):
+            candidate = candidate.strip()
+            if candidate == '*':
+                return True
+            if candidate.startswith('W/'):
+                candidate = candidate[2:]
+            if candidate == etag:
+                return True
+        return False
+
+    def is_not_modified(self, etag, modified_at):
+        if_none_match = self.headers.get('If-None-Match')
+        if if_none_match is not None:
+            return self.etag_matches(if_none_match, etag)
+
+        if_modified_since = self.headers.get('If-Modified-Since')
+        if if_modified_since is None:
+            return False
+        cached_at = parse_http_date(if_modified_since)
+        return cached_at is not None and int(modified_at) <= int(cached_at)
+
+    def if_range_matches(self, etag, modified_at):
+        if_range = self.headers.get('If-Range')
+        if if_range is None:
+            return True
+        if_range = if_range.strip()
+        if if_range.startswith('"') or if_range.startswith('W/'):
+            return if_range == etag
+        cached_at = parse_http_date(if_range)
+        return cached_at is not None and int(modified_at) <= int(cached_at)
+
+    def send_file_validator_headers(self, file_stat, etag):
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("ETag", etag)
+        self.send_header("Last-Modified", self.date_time_string(file_stat.st_mtime))
+        self.send_header("Cache-Control", "no-cache")
 
     def cleanup_expired_sessions(self):
         now = time.time()
@@ -633,6 +714,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         None, in which case the caller has nothing further to do.
 
         """
+        self._range_remaining = None
         path = self.translate_path(self.path)
         print("send_head - path: " + str(self.path))
         f = None
@@ -680,11 +762,45 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         except IOError:
             self.send_error(404, "File not found")
             return None
-        self.send_response(200)
-        self.send_header("Content-type", ctype)
         fs = os.fstat(f.fileno())
-        self.send_header("Content-Length", str(fs[6]))
-        self.send_header("Last-Modified", self.date_time_string(fs.st_mtime))
+        etag = self.make_file_etag(fs)
+        if self.is_not_modified(etag, fs.st_mtime):
+            self.send_response(304)
+            self.send_file_validator_headers(fs, etag)
+            self.end_headers()
+            f.close()
+            return None
+
+        byte_range = None
+        range_header = self.headers.get("Range")
+        if range_header and self.if_range_matches(etag, fs.st_mtime):
+            try:
+                byte_range = parse_byte_range(range_header, fs.st_size)
+            except ValueError:
+                self.send_response(416)
+                self.send_header("Content-Range", "bytes */%s" % fs.st_size)
+                self.send_header("Content-Length", "0")
+                self.send_file_validator_headers(fs, etag)
+                self.end_headers()
+                f.close()
+                return None
+
+        if byte_range is None:
+            self.send_response(200)
+            content_length = fs.st_size
+        else:
+            start, end = byte_range
+            content_length = end - start + 1
+            self._range_remaining = content_length
+            f.seek(start)
+            self.send_response(206)
+            self.send_header(
+                "Content-Range",
+                "bytes %s-%s/%s" % (start, end, fs.st_size),
+            )
+        self.send_header("Content-type", ctype)
+        self.send_header("Content-Length", str(content_length))
+        self.send_file_validator_headers(fs, etag)
         self.end_headers()
         return f
 
@@ -965,7 +1081,16 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         to copy binary data as well.
 
         """
-        shutil.copyfileobj(source, outputfile)
+        remaining = getattr(self, '_range_remaining', None)
+        if remaining is None:
+            shutil.copyfileobj(source, outputfile)
+            return
+        while remaining > 0:
+            chunk = source.read(min(self.copy_buffer_size, remaining))
+            if not chunk:
+                break
+            outputfile.write(chunk)
+            remaining -= len(chunk)
 
     def guess_type(self, path):
         """Guess the type of a file.
