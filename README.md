@@ -14,17 +14,28 @@ Simple HTTP server in Python with a modern, browser-friendly UI.
 - List running server instances via `list` (human readable) or `list --porcelain` (script-friendly).
 - Threaded request handling for concurrent clients.
 - JSON health endpoint at `/healthz` with status, uptime, and version details.
+- Optional local-only binding with `--local`; external access remains the default.
 - Serve any path by passing a directory argument.
 
 ## Usage
 ```bash
-python src/simpleserver.py [address:port] [path] [--password <value> | -pwd <value>]
+python src/simpleserver.py [address:port] [path] [--local] [--password <value> | -pwd <value>]
 ```
 
 ### Examples
 Run on the default interface/port:
 ```bash
 python src/simpleserver.py
+```
+
+By default, the server binds to `0.0.0.0` so other devices can connect. Restrict it to the local machine with:
+```bash
+python src/simpleserver.py --local
+```
+
+Use a custom local-only port:
+```bash
+python src/simpleserver.py 9000 --local
 ```
 
 Bind to a specific interface/port:

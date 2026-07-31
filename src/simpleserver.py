@@ -961,10 +961,15 @@ def handle_exit(signum, frame):
 
 def parse_args(argv):
     password = None
+    local_only = False
     remaining = []
     index = 0
     while index < len(argv):
         arg = argv[index]
+        if arg == "--local":
+            local_only = True
+            index += 1
+            continue
         if arg in ("--password", "-pwd"):
             if index + 1 >= len(argv):
                 raise ValueError("Missing value for --password/-pwd option.")
@@ -973,10 +978,29 @@ def parse_args(argv):
             continue
         remaining.append(arg)
         index += 1
-    return remaining, password
+    return remaining, password, local_only
 
 
-args, server_password = parse_args(sys.argv[1:])
+def resolve_bind_address(args, local_only=False):
+    if args:
+        address = args[0]
+        if ':' in address:
+            interface, port_text = address.rsplit(':', 1)
+            port = int(port_text)
+        else:
+            interface = '0.0.0.0'
+            port = int(address)
+    else:
+        port = 8000
+        interface = '0.0.0.0'
+
+    if local_only:
+        interface = '127.0.0.1'
+
+    return interface, port
+
+
+args, server_password, local_only = parse_args(sys.argv[1:])
 
 if args and args[0] == "list":
     if len(args) > 1 and args[1] == "--porcelain":
@@ -985,17 +1009,7 @@ if args and args[0] == "list":
         list_servers()
     sys.exit(0)
 
-if args:
-    address = args[0]
-    if (':' in address):
-        interface = address.split(':')[0]
-        port = int(address.split(':')[1])
-    else:
-        interface = '0.0.0.0'
-        port = int(address)
-else:
-    port = 8000
-    interface = '0.0.0.0'
+interface, port = resolve_bind_address(args, local_only)
 
 if len(args) > 1:
     os.chdir(args[1])
