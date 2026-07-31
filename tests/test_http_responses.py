@@ -1,4 +1,5 @@
 import http.client
+import json
 import os
 from pathlib import Path
 import sys
@@ -79,6 +80,27 @@ def request(server_address, method, path, body=None, headers=None):
 
 
 class HttpResponseSmokeTests(unittest.TestCase):
+    def test_health_endpoint_returns_json_for_get_and_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with LocalServer(directory, password="test-secret") as address:
+                status, headers, body = request(address, "GET", "/healthz")
+                payload = json.loads(body)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(headers.get_content_type(), "application/json")
+                self.assertEqual(headers.get_content_charset(), "utf-8")
+                self.assertEqual(headers["Content-Length"], str(len(body)))
+                self.assertEqual(payload["status"], "ok")
+                self.assertEqual(payload["app"], "simple-server")
+                self.assertEqual(payload["version"], simpleserver.__version__)
+                self.assertGreaterEqual(payload["uptime"], 0)
+
+                status, headers, body = request(address, "HEAD", "/healthz")
+                self.assertEqual(status, 200)
+                self.assertEqual(headers.get_content_type(), "application/json")
+                self.assertGreater(int(headers["Content-Length"]), 0)
+                self.assertEqual(body, b"")
+
     def test_static_file_get_and_head_responses(self):
         content = b"hello from simple-server\n"
         with tempfile.TemporaryDirectory() as directory:

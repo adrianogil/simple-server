@@ -64,6 +64,21 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     session_store = {}
     session_lock = threading.Lock()
 
+    def send_health_response(self, include_body=True):
+        payload = {
+            "status": "ok",
+            "uptime": max(0.0, time.monotonic() - self.server.started_at),
+            "version": __version__,
+            "app": "simple-server",
+        }
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if include_body:
+            self.wfile.write(body)
+
     def cleanup_expired_sessions(self):
         now = time.time()
         with self.session_lock:
@@ -211,6 +226,9 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """Serve a GET request."""
+        if urllib.parse.urlsplit(self.path).path == "/healthz":
+            self.send_health_response()
+            return
         if self.path.startswith("/__logout__"):
             self.handle_logout()
             return
@@ -233,6 +251,9 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         """Serve a HEAD request."""
+        if urllib.parse.urlsplit(self.path).path == "/healthz":
+            self.send_health_response(include_body=False)
+            return
         if self.server_password and not self.is_authenticated():
             self.send_response(401)
             self.end_headers()
@@ -843,7 +864,9 @@ except ImportError:
     from http.server import HTTPServer
 
 class ThreadingSimpleServer(ThreadingMixIn, HTTPServer):
-    pass
+    def __init__(self, server_address, request_handler_class, bind_and_activate=True):
+        super().__init__(server_address, request_handler_class, bind_and_activate)
+        self.started_at = time.monotonic()
 
 REGISTRY_DIR = os.path.join(os.path.expanduser("~"), ".simple-server")
 REGISTRY_PATH = os.path.join(REGISTRY_DIR, "servers.json")

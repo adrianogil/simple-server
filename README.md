@@ -13,6 +13,7 @@ Simple HTTP server in Python with a modern, browser-friendly UI.
 - Session cookies expire after 30 minutes by default.
 - List running server instances via `list` (human readable) or `list --porcelain` (script-friendly).
 - Threaded request handling for concurrent clients.
+- JSON health endpoint at `/healthz` with status, uptime, and version details.
 - Serve any path by passing a directory argument.
 
 ## Usage
@@ -51,6 +52,12 @@ List running servers in a script-friendly format:
 python src/simpleserver.py list --porcelain
 ```
 
+Check server health:
+```bash
+curl http://127.0.0.1:8000/healthz
+```
+
 ## Notes
 - When password protection is enabled, clients must log in through the `/__login__` page and can log out via `/__logout__`.
+- The `/healthz` endpoint remains available without authentication for health probes.
 - The server writes upload files into the current working directory (or the directory you pass on the command line).
