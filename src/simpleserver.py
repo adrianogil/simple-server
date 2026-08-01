@@ -27,10 +27,14 @@ import re
 from io import BytesIO
 import atexit
 import json
+import ipaddress
 import signal
+import socket
 import time
 import secrets
 from http import cookies
+
+from simple_qr import qr_svg
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -118,6 +122,88 @@ def parse_byte_range(value, file_size):
     return max(0, file_size - suffix_length), file_size - 1
 
 
+def discover_lan_addresses():
+    """Return usable non-loopback IPv4 addresses for this machine."""
+    addresses = set()
+    try:
+        for item in socket.getaddrinfo(
+            socket.gethostname(),
+            None,
+            socket.AF_INET,
+            socket.SOCK_DGRAM,
+        ):
+            addresses.add(item[4][0])
+    except socket.gaierror:
+        pass
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # UDP connect selects an interface without sending any packets.
+        probe.connect(("192.0.2.1", 80))
+        addresses.add(probe.getsockname()[0])
+    except OSError:
+        pass
+    finally:
+        probe.close()
+
+    usable = []
+    for address in addresses:
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        if (
+            parsed.version == 4
+            and not parsed.is_loopback
+            and not parsed.is_unspecified
+            and not parsed.is_multicast
+            and not parsed.is_link_local
+        ):
+            usable.append(address)
+    return sorted(usable, key=lambda value: tuple(int(part) for part in value.split('.')))
+
+
+def build_connection_urls(interface, port, discovered=None):
+    """Build browser URLs for an interface, preferring LAN addresses."""
+    addresses = []
+    if interface in ("", "0.0.0.0"):
+        addresses.extend(discover_lan_addresses() if discovered is None else discovered)
+        addresses.append("127.0.0.1")
+    else:
+        try:
+            addresses.append(str(ipaddress.ip_address(interface)))
+        except ValueError:
+            try:
+                addresses.extend(
+                    item[4][0]
+                    for item in socket.getaddrinfo(
+                        interface,
+                        port,
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                    )
+                )
+            except socket.gaierror:
+                addresses.append("127.0.0.1")
+
+    unique = []
+    for address in addresses:
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        if parsed.version != 4 or parsed.is_unspecified or parsed.is_multicast:
+            continue
+        normalized = str(parsed)
+        if normalized not in unique:
+            unique.append(normalized)
+
+    if not unique:
+        unique.append("127.0.0.1")
+    unique.sort(key=lambda value: ipaddress.ip_address(value).is_loopback)
+    return ["http://%s:%s/" % (address, port) for address in unique]
+
+
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
     """Simple HTTP request handler with GET/HEAD/POST commands.
@@ -173,6 +259,69 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if include_body:
+            self.wfile.write(body)
+
+    def send_connection_page(self, include_body=True):
+        urls = self.server.connection_urls
+        local_only = all(
+            ipaddress.ip_address(urllib.parse.urlsplit(url).hostname).is_loopback
+            for url in urls
+        )
+        cards = []
+        for url in urls:
+            escaped_url = html.escape(url, quote=True)
+            cards.append(
+                '<article class="connection-card">'
+                '<div class="qr-wrap">%s</div>'
+                '<div class="connection-info">'
+                '<span class="eyebrow">Connection URL</span>'
+                '<a class="connection-url" href="%s">%s</a>'
+                '<button class="copy-button" type="button" data-url="%s">Copy URL</button>'
+                '<span class="copy-status" aria-live="polite"></span>'
+                '</div></article>' % (qr_svg(url), escaped_url, escaped_url, escaped_url)
+            )
+
+        notice = ""
+        if local_only:
+            notice = (
+                '<div class="notice" role="status"><strong>Local-only mode.</strong> '
+                'Phones and tablets cannot reach this address. Restart without '
+                '<code>--local</code> to expose a LAN URL.</div>'
+            )
+
+        body = ("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>(function(){var stored=localStorage.getItem('simple-server-theme');document.documentElement.setAttribute('data-theme',stored||'dark');})();</script>
+<title>Connect a device</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1120;--text:#e2e8f0;--muted:#94a3b8;--card:#0f172a;--surface:#111827;--border:#1e293b;--primary:#3b82f6;--link:#60a5fa;--notice:#172554;--notice-border:#1d4ed8;--shadow:0 12px 30px rgba(2,6,23,.6)}
+:root[data-theme='light']{color-scheme:light;--bg:#f5f7fb;--text:#0f172a;--muted:#64748b;--card:#fff;--surface:#f8fafc;--border:#e2e8f0;--primary:#2563eb;--link:#1d4ed8;--notice:#eff6ff;--notice-border:#93c5fd;--shadow:0 12px 30px rgba(15,23,42,.08)}
+*{box-sizing:border-box}body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:32px}.container{max-width:920px;margin:0 auto}.page-header{margin-bottom:24px}.back{color:var(--link);text-decoration:none;font-size:14px}.page-header h1{font-size:30px;margin:18px 0 6px}.page-header p{color:var(--muted);margin:0;line-height:1.5}.notice{background:var(--notice);border:1px solid var(--notice-border);border-radius:12px;padding:14px 16px;margin-bottom:18px;line-height:1.5}.connections{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}.connection-card{display:flex;align-items:center;gap:20px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:var(--shadow)}.qr-wrap{flex:0 0 168px;background:#fff;border-radius:12px;padding:6px;line-height:0}.qr-code{display:block;width:100%%;height:auto}.connection-info{display:flex;min-width:0;flex:1;flex-direction:column;align-items:flex-start;gap:9px}.eyebrow{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.connection-url{color:var(--link);font-weight:600;overflow-wrap:anywhere}.copy-button{background:var(--primary);color:#fff;border:0;border-radius:8px;padding:8px 11px;font-size:14px;cursor:pointer}.copy-status{min-height:18px;color:var(--muted);font-size:12px}@media(max-width:580px){body{padding:20px}.connection-card{flex-direction:column;align-items:stretch}.qr-wrap{width:min(100%%,240px);margin:0 auto;flex-basis:auto}}
+</style>
+</head>
+<body>
+<main class="container">
+<header class="page-header"><a class="back" href="/">&larr; Back to files</a><h1>Connect a device</h1><p>Open the URL or scan its QR code from a phone or tablet on the same network.</p></header>
+%s
+<section class="connections" aria-label="Available connection addresses">%s</section>
+</main>
+<script>
+(function(){function fallbackCopy(value){var input=document.createElement('textarea');input.value=value;input.setAttribute('readonly','');input.style.position='fixed';input.style.opacity='0';document.body.appendChild(input);input.select();var copied=document.execCommand('copy');document.body.removeChild(input);return copied?Promise.resolve():Promise.reject();}document.querySelectorAll('.copy-button').forEach(function(button){button.addEventListener('click',function(){var status=button.parentElement.querySelector('.copy-status');var value=button.getAttribute('data-url');var action=navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(value):fallbackCopy(value);action.then(function(){status.textContent='Copied to clipboard.';button.textContent='Copied';}).catch(function(){status.textContent='Copy failed. Select the URL above.';});});});})();
+</script>
+</body>
+</html>
+""" % (notice, ''.join(cards))).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         if include_body:
             self.wfile.write(body)
@@ -546,6 +695,9 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.copyfile(f, self.wfile)
                 f.close()
             return
+        if request_path == "/__connect__":
+            self.send_connection_page()
+            return
         f = self.send_head()
         if f:
             self.copyfile(f, self.wfile)
@@ -563,6 +715,9 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         if self.server_password and not self.is_authenticated():
             self.send_response(401)
             self.end_headers()
+            return
+        if request_path == "/__connect__":
+            self.send_connection_page(include_body=False)
             return
         f = self.send_head()
         if f:
@@ -1065,7 +1220,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                     "border:1px solid var(--border);}\n")
         customwrite("input[type='text'],input[type='file'],select{font-size:14px;}\n")
         customwrite(".btn{background:var(--primary);color:#fff;border:none;border-radius:8px;"
-                    "padding:8px 12px;font-size:14px;cursor:pointer;}\n")
+                    "padding:8px 12px;font-size:14px;cursor:pointer;text-decoration:none;}\n")
         customwrite(".btn.secondary{background:var(--secondary);}\n")
         customwrite(".upload-panel{margin-bottom:18px;}\n")
         customwrite(".upload-form{display:block;}\n")
@@ -1143,6 +1298,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             customwrite("<button class=\"btn secondary\" type=\"button\" onclick=\"" + js_action_create_folder + "\">Create</button>")
             customwrite("</form>\n")
             customwrite("<a class=\"btn\" href='%s'>Download zip</a>\n" % (self.path + "?download",))
+            customwrite("<a class=\"btn secondary\" href='/__connect__'>Connect devices</a>\n")
             customwrite("<div class=\"share-settings\">")
             customwrite("<label for=\"share-expiry\"><small>Share expires:</small></label>")
             customwrite("<select id=\"share-expiry\">")
@@ -1403,6 +1559,8 @@ class ThreadingSimpleServer(ThreadingMixIn, HTTPServer):
     def __init__(self, server_address, request_handler_class, bind_and_activate=True):
         super().__init__(server_address, request_handler_class, bind_and_activate)
         self.started_at = time.monotonic()
+        bound_interface, bound_port = self.server_address[:2]
+        self.connection_urls = build_connection_urls(bound_interface, bound_port)
 
 REGISTRY_DIR = os.path.join(os.path.expanduser("~"), ".simple-server")
 REGISTRY_PATH = os.path.join(REGISTRY_DIR, "servers.json")
@@ -1552,15 +1710,19 @@ if len(args) > 1:
 
 SimpleHTTPRequestHandler.server_password = server_password
 
-print('Started HTTP server on ' +  interface + ':' + str(port))
-
 
 def run_server():
     server = ThreadingSimpleServer((interface, port), SimpleHTTPRequestHandler)
-    register_server(interface, port, os.getcwd())
+    actual_port = server.server_address[1]
+    register_server(interface, actual_port, os.getcwd())
     atexit.register(deregister_server)
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)
+    print('Started HTTP server on ' + interface + ':' + str(actual_port))
+    print('Available connections:')
+    for url in server.connection_urls:
+        print('  ' + url)
+    print('Connection page: ' + server.connection_urls[0] + '__connect__')
     try:
         while 1:
             sys.stdout.flush()
@@ -1568,6 +1730,8 @@ def run_server():
     except KeyboardInterrupt:
         deregister_server()
         print('Finished.')
+    finally:
+        server.server_close()
 
 if __name__ == '__main__':
     run_server()

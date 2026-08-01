@@ -174,6 +174,50 @@ class HttpResponseSmokeTests(unittest.TestCase):
                 self.assertGreater(int(headers["Content-Length"]), 0)
                 self.assertEqual(body, b"")
 
+    def test_connection_page_lists_urls_with_inline_qr_codes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            local_server = LocalServer(directory)
+            with local_server as address:
+                port = address[1]
+                local_server.server.connection_urls = [
+                    "http://192.168.1.50:%s/" % port,
+                    "http://127.0.0.1:%s/" % port,
+                ]
+
+                status, headers, body = request(address, "GET", "/__connect__")
+                self.assertEqual(status, 200)
+                self.assertEqual(headers.get_content_type(), "text/html")
+                self.assertEqual(headers.get_content_charset(), "utf-8")
+                self.assertEqual(headers["Cache-Control"], "no-store")
+                self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+                self.assertIn(b"Connect a device", body)
+                self.assertIn(b"http://192.168.1.50:", body)
+                self.assertEqual(body.count(b'class="qr-code"'), 2)
+                self.assertNotIn(b"Local-only mode", body)
+                self.assertNotIn(b"<script src=", body)
+
+                status, headers, body = request(address, "HEAD", "/__connect__")
+                self.assertEqual(status, 200)
+                self.assertGreater(int(headers["Content-Length"]), 0)
+                self.assertEqual(body, b"")
+
+    def test_connection_page_warns_for_local_only_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with LocalServer(directory) as address:
+                status, headers, body = request(address, "GET", "/__connect__")
+
+                self.assertEqual(status, 200)
+                self.assertIn(b"Local-only mode", body)
+                self.assertIn(b"Restart without <code>--local</code>", body)
+
+    def test_connection_page_requires_configured_password(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with LocalServer(directory, password="test-secret") as address:
+                status, headers, body = request(address, "GET", "/__connect__")
+
+                self.assertEqual(status, 401)
+                self.assertIn(b"Password required", body)
+
     def test_static_file_get_and_head_responses(self):
         content = b"hello from simple-server\n"
         with tempfile.TemporaryDirectory() as directory:
@@ -451,6 +495,7 @@ class HttpResponseSmokeTests(unittest.TestCase):
                 self.assertIn(b'id="share-expiry"', body)
                 self.assertIn(b'class="share-button"', body)
                 self.assertIn(b"fetch('/__share__'", body)
+                self.assertIn(b'href=\'/__connect__\'>Connect devices', body)
 
                 status, headers, body = request(address, "GET", "/missing.txt")
                 self.assertEqual(status, 404)

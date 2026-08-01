@@ -16,6 +16,7 @@ Simple HTTP server in Python with a modern, browser-friendly UI.
 - Threaded request handling for concurrent clients.
 - HTTP byte ranges and ETag/Last-Modified cache validation for seeking and resumable downloads.
 - JSON health endpoint at `/healthz` with status, uptime, and version details.
+- Device connection page at `/__connect__` with available LAN URLs and offline QR codes.
 - Optional local-only binding with `--local`; external access remains the default.
 - Serve any path by passing a directory argument.
 
@@ -34,6 +35,8 @@ By default, the server binds to `0.0.0.0` so other devices can connect. Restrict
 ```bash
 python src/simpleserver.py --local
 ```
+
+At startup, the server prints its available connection URLs and a link to the device connection page. Open `/__connect__` from the file browser to copy an address or scan its QR code. QR codes are generated locally and do not send connection details to a third party.
 
 Use a custom local-only port:
 ```bash

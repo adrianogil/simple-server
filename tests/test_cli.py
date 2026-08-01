@@ -16,6 +16,28 @@ finally:
 
 
 class CommandLineTests(unittest.TestCase):
+    def test_wildcard_connection_urls_prefer_lan_and_include_loopback(self):
+        urls = simpleserver.build_connection_urls(
+            "0.0.0.0",
+            8123,
+            discovered=["192.168.1.50", "10.0.0.8", "192.168.1.50"],
+        )
+
+        self.assertEqual(
+            urls,
+            [
+                "http://192.168.1.50:8123/",
+                "http://10.0.0.8:8123/",
+                "http://127.0.0.1:8123/",
+            ],
+        )
+
+    def test_local_connection_url_stays_on_loopback(self):
+        self.assertEqual(
+            simpleserver.build_connection_urls("127.0.0.1", 9000),
+            ["http://127.0.0.1:9000/"],
+        )
+
     def test_default_bind_address_is_externally_accessible(self):
         args, password, local_only = simpleserver.parse_args([])
 
